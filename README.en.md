@@ -2,11 +2,7 @@
 
 [简体中文](README.md) | English
 
-Self-hosted workspace for Codex and Claude Code sessions across your computers. Java server, Go daemon and CLI, MySQL storage, and an agent-to-agent skill.
-
-Run one background daemon on each device. Each daemon connects to your server, and the web interface brings together your Codex and Claude Code sessions: read ongoing conversations, send follow-up instructions, and watch replies arrive. The `relayctl` CLI and `agent-bridge` skill provide the same entry point for agents.
-
-The server uses **Java 17+ / Spring Boot / MySQL 8.0+**. The device daemon and `relayctl` CLI are written in **Go** and distributed as a single executable. Devices need no Python, Java, or Go runtime. macOS and Linux are supported.
+Relay brings Codex and Claude Code sessions from all your computers into one workspace. Follow live replies, continue conversations remotely, retrieve files, and let agents on different devices send instructions to each other and collaborate on tasks.
 
 Relay is an early, self-hostable version. Hosting your own server gives you control over accounts, conversations, and storage. The `relay.chaojibot.com` address in the examples is an existing hosted instance; replace it with your own domain when self-hosting. See the [self-hosting guide (Chinese)](deploy/README.md) and [contribution guide (Chinese)](CONTRIBUTING.md).
 

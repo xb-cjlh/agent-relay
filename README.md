@@ -2,11 +2,7 @@
 
 简体中文 | [English](README.en.md)
 
-Self-hosted workspace for Codex and Claude Code sessions across your computers. Java server, Go daemon and CLI, MySQL storage, and an agent-to-agent skill.
-
-每台设备运行一个后台进程，主动连接你的服务端。Web 界面直接显示各设备的 Codex / Claude Code 会话：查看连续消息、追加指令和跟进回复。配套的 `relayctl` CLI 和 `agent-bridge` skill 提供同一入口。
-
-服务端使用 **Java 17+ / Spring Boot / MySQL 8.0+**；设备守护进程与 `relayctl` CLI 使用 **Go**，编译成单个可执行文件，设备运行时无需 Python、Java 或 Go 环境。设备端支持 macOS / Linux。
+Relay 让你在一个工作台管理各台电脑上的 Codex 和 Claude Code 会话，查看实时回复、远程续聊和取回文件。不同设备上的 Agent 也能相互发送指令，协作完成任务。
 
 这是可自建的早期版本。使用自己的服务端可控制账号、会话及存储；文档中的 `relay.chaojibot.com` 是现有托管实例，自建时换成自己的域名。部署步骤见 [自建指南](deploy/README.md)，贡献方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
