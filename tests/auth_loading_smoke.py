@@ -18,7 +18,8 @@ def main():
   try:
    with sync_playwright() as p:
     for name,engine in [('Chromium',p.chromium),('WebKit',p.webkit)]:
-     options={'executable_path':'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'} if name=='Chromium' else {}
+     chrome=Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+     options={'executable_path':str(chrome)} if name=='Chromium' and chrome.is_file() else {}
      browser=engine.launch(**options)
      try:
       context=browser.new_context();page=context.new_page();errors=[]
