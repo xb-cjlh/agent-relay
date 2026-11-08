@@ -1,5 +1,7 @@
 # Relay · 跨设备 Agent 工作台
 
+简体中文 | [English](README.en.md)
+
 Self-hosted workspace for Codex and Claude Code sessions across your computers. Java server, Go daemon and CLI, MySQL storage, and an agent-to-agent skill.
 
 每台设备运行一个后台进程，主动连接你的服务端。Web 界面直接显示各设备的 Codex / Claude Code 会话：查看连续消息、追加指令和跟进回复。配套的 `relayctl` CLI 和 `agent-bridge` skill 提供同一入口。
