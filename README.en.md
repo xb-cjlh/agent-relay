@@ -10,6 +10,16 @@ The server uses **Java 17+ / Spring Boot / MySQL 8.0+**. The device daemon and `
 
 Relay is an early, self-hostable version. Hosting your own server gives you control over accounts, conversations, and storage. The `relay.chaojibot.com` address in the examples is an existing hosted instance; replace it with your own domain when self-hosting. See the [self-hosting guide (Chinese)](deploy/README.md) and [contribution guide (Chinese)](CONTRIBUTING.md).
 
+## Use the hosted service
+
+You can use the **[Relay hosted service](https://relay.chaojibot.com)** directly, without deploying a server:
+
+1. Open the website, register and sign in, then create a key in the Account & SK panel (`账号与 SK`).
+2. Follow [Install on a device](#install-on-a-device) below to install the CLI, skill, and daemon on each device. Enter your own SK during setup.
+3. Return to the web interface to browse sessions across your devices, send instructions, and retrieve files. You can also use `relayctl` or the skill.
+
+The installation commands below connect to the hosted service by default. Codex / Claude Code still run on your devices, so install and authenticate the corresponding CLIs first. When self-hosting, replace the server address with your own domain.
+
 ## Install on a device
 
 The hosted [installation and usage guide (Chinese)](https://relay.chaojibot.com/docs/) covers CLI downloads, credentials, skill installation, automatic startup, diagnostics, updates, and removal. Its source is [docs/install.md](docs/install.md). Devices do not need to build the source.

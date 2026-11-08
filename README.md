@@ -10,6 +10,16 @@ Self-hosted workspace for Codex and Claude Code sessions across your computers. 
 
 这是可自建的早期版本。使用自己的服务端可控制账号、会话及存储；文档中的 `relay.chaojibot.com` 是现有托管实例，自建时换成自己的域名。部署步骤见 [自建指南](deploy/README.md)，贡献方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
+## 直接使用托管版
+
+无需自行部署服务端，可以直接使用 **[Relay 托管版](https://relay.chaojibot.com)**：
+
+1. 打开网页，注册并登录账号，在「账号与 SK」创建密钥。
+2. 按照下方的[安装到设备](#安装到设备)步骤，在每台设备上安装 CLI、skill 和后台进程，配置时输入自己的 SK。
+3. 回到网页，即可查看各设备的会话、发送指令和取回文件，也可以通过 `relayctl` 或 skill 操作。
+
+下方安装命令默认连接托管版。Codex / Claude Code 仍在你的设备上运行，需提前安装并登录对应 CLI；自建用户将服务端地址换成自己的域名即可。
+
 ## 安装到设备
 
 完整的 [安装与使用文档](https://relay.chaojibot.com/docs/) 已放到服务端，包括 CLI 下载、令牌配置、skill 安装、后台自启、检查、更新和卸载；源码文档为 [docs/install.md](docs/install.md)。设备无需构建源码。
