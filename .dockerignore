@@ -1,0 +1,13 @@
+**
+!server
+!server/**
+server/target
+!relayctl
+!relayctl/static
+!relayctl/static/**
+!relayctl/skills
+!relayctl/skills/**
+!public
+!public/**
+!docs
+!docs/**

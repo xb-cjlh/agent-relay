@@ -1,0 +1,40 @@
+services:
+  relay:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      RELAY_DB_URL: ${RELAY_DB_URL:?Set a JDBC MySQL URL for the dedicated Relay database}
+      RELAY_DB_USERNAME: ${RELAY_DB_USERNAME:?Set the Relay MySQL account}
+      RELAY_DB_PASSWORD: ${RELAY_DB_PASSWORD:?Set the Relay MySQL password}
+      RELAY_AUTH_PUBLIC_ORIGIN: ${RELAY_AUTH_PUBLIC_ORIGIN:?Set the public HTTPS origin}
+      RELAY_AUTH_SECURE_COOKIE: ${RELAY_AUTH_SECURE_COOKIE:-true}
+      SPRING_MAIL_HOST: ${SPRING_MAIL_HOST:?Set an SMTP host for registration emails}
+      SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-587}
+      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME:?Set an SMTP username}
+      SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD:?Set an SMTP password}
+      RELAY_MAIL_FROM: ${RELAY_MAIL_FROM:?Set the registration sender address}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: "true"
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: "true"
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_REQUIRED: "true"
+      RELAY_OSS_ENDPOINT: ${RELAY_OSS_ENDPOINT:-}
+      RELAY_OSS_UPLOAD_ENDPOINT: ${RELAY_OSS_UPLOAD_ENDPOINT:-}
+      RELAY_OSS_REGION: ${RELAY_OSS_REGION:-cn-hangzhou}
+      RELAY_OSS_BUCKET: ${RELAY_OSS_BUCKET:-}
+      RELAY_OSS_ACCESS_KEY_ID: ${RELAY_OSS_ACCESS_KEY_ID:-}
+      RELAY_OSS_ACCESS_KEY_SECRET: ${RELAY_OSS_ACCESS_KEY_SECRET:-}
+      RELAY_OSS_SECURITY_TOKEN: ${RELAY_OSS_SECURITY_TOKEN:-}
+      RELAY_OSS_PREFIX: ${RELAY_OSS_PREFIX:-relay-prod/}
+      RELAY_DOWNLOADS: /downloads
+    volumes:
+      - relay-data:/data
+      - ./dist/downloads:/downloads:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "4", "http://127.0.0.1:8765/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  relay-data:

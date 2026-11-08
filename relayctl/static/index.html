@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Relay · 会话</title><link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css"><script src="/vendor/spark-md5.min.js" defer></script><script src="/image-upload.js" defer></script><script src="/app.js" defer></script><script src="/account.js" defer></script>
+</head>
+<body>
+<div id="session-loading" class="session-loading" role="status"><img src="/favicon.svg" alt="Relay" width="36" height="36"><p id="session-loading-message">正在加载…</p><button id="retry-session" type="button" class="button secondary" hidden>重试</button></div>
+<div id="login" class="login-screen" hidden><div class="login-card">
+<img src="/favicon.svg" alt="Relay" width="40" height="40"><h1 id="auth-title">登录 Relay</h1><p>在同一个地方，继续每台设备上的对话。</p>
+<form id="auth-form">
+<label for="auth-email">邮箱</label><input id="auth-email" type="email" autocomplete="username" required maxlength="254">
+<div id="auth-name-field" hidden><label for="auth-name">昵称</label><input id="auth-name" autocomplete="nickname" maxlength="40"></div>
+<label for="auth-password">密码</label><input id="auth-password" type="password" autocomplete="current-password" required>
+<div id="auth-code-field" hidden><label for="auth-code">邮箱验证码</label><div class="code-input-row"><input id="auth-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"><button id="send-code" class="button secondary" type="button">获取验证码</button></div></div>
+<p id="auth-error" class="error" role="alert"></p><p id="auth-notice" role="status"></p><button id="auth-submit" class="button primary" type="submit">登录</button>
+</form><div class="auth-links"><button type="button" data-auth-mode="register">注册账号</button><button type="button" data-auth-mode="reset">忘记密码</button><button type="button" data-auth-mode="login" hidden>返回登录</button></div>
+
+<p><a href="/docs/">安装与使用文档 ↗</a></p>
+</div></div>
+<div id="workspace" class="workspace" hidden>
+<aside id="sidebar" class="sidebar">
+<div class="sidebar-heading"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28">Relay</a><button id="close-sidebar" class="icon-button mobile-only" aria-label="关闭会话列表"><span data-icon="close"></span></button></div>
+<button id="new-agent" class="new-session"><span data-icon="plus"></span>新会话</button>
+<div class="device-switch"><label for="device-filter">切换设备</label><select id="device-filter"><option value="">全部设备</option></select></div>
+<label class="search"><span data-icon="search"></span><input id="search" type="search" placeholder="搜索会话" aria-label="搜索会话"></label>
+<div id="session-list" class="session-list" aria-label="会话列表"></div>
+<div class="sidebar-footer">
+<button id="devices-button"><span data-icon="monitor"></span>设备<span id="device-count"></span></button>
+<button id="account-button"><span data-icon="key"></span>账号与 SK</button>
+<button id="files-button"><span data-icon="folder"></span>文件</button>
+<a class="docs-link" href="/docs/" target="_blank" rel="noopener">安装与使用 ↗</a>
+<div class="connection-row"><span id="connection-dot" class="dot online"></span><span id="connection-label">已连接</span><button id="logout" class="icon-button" aria-label="退出登录"><span data-icon="logout"></span></button></div>
+</div></aside>
+<button id="sidebar-backdrop" class="sidebar-backdrop" aria-label="关闭会话列表" hidden></button>
+<main class="conversation">
+<header class="conversation-header"><button id="open-sidebar" class="icon-button mobile-only" aria-label="打开会话列表"><span data-icon="menu"></span></button><div class="conversation-heading"><div class="conversation-title-row"><h1 id="conversation-title">会话</h1><span id="conversation-kind" class="agent-badge" hidden></span></div><div id="conversation-meta" class="conversation-meta"></div></div><span id="conversation-status" class="conversation-status"></span></header>
+<div id="empty-conversation" class="empty-conversation"><img src="/favicon.svg" alt="" width="42" height="42"><h2>继续一个对话。</h2><p id="empty-description">选择已有会话，或在任意设备上新建会话。</p><button id="empty-new-agent" class="button secondary"><span data-icon="plus"></span>新会话</button></div>
+<div id="thread" class="thread" hidden>
+<div id="message-scroll" class="message-scroll" tabindex="0" aria-label="会话消息"><div class="message-column"><button id="load-older" class="load-older" hidden>加载更早的消息</button><div id="messages" role="log" aria-label="消息记录" aria-live="off"></div><div id="thread-empty" class="thread-empty" hidden>发一条消息，开始这个会话。</div></div></div>
+<button id="new-messages" class="new-messages button secondary" hidden><span data-icon="down"></span>有新消息</button>
+<div class="composer-wrap"><form id="send-form" class="composer"><label class="sr-only" for="prompt">消息</label><div id="attachment-list" class="attachment-list" hidden></div><textarea id="prompt" rows="2" placeholder="发送消息…" maxlength="32000"></textarea>
+<div class="composer-actions"><div><button id="attach-image" class="icon-button" type="button" aria-label="添加图片" title="添加图片"><span data-icon="image"></span></button><input id="image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif" multiple hidden><span id="composer-hint">Enter 发送，Shift + Enter 换行</span></div><div><button id="stop-generation" type="button" class="stop-button" hidden><span data-icon="stop"></span>停止</button><button id="send-button" type="submit" class="send-button" aria-label="发送消息" title="发送消息"><span data-icon="up"></span></button></div></div></form><p id="queue-hint" class="queue-hint"></p></div>
+</div></main></div>
+<dialog id="agent-dialog"><form id="agent-form" class="dialog-content"><div class="dialog-heading"><h2>新会话</h2><button type="button" class="icon-button" data-close="agent-dialog" aria-label="关闭"><span data-icon="close"></span></button></div>
+<label for="agent-device">设备</label><select id="agent-device" required></select><label for="agent-kind">Agent</label><select id="agent-kind"><option value="codex">Codex</option><option value="claude">Claude Code</option></select>
+<label for="agent-cwd">工作目录</label><input id="agent-cwd" required placeholder="目标设备上的绝对路径"><div class="dialog-actions"><button class="button primary" type="submit">创建会话</button></div></form></dialog>
+<dialog id="devices-dialog"><div class="dialog-content"><div class="dialog-heading"><h2>设备</h2><button type="button" class="icon-button" data-close="devices-dialog" aria-label="关闭"><span data-icon="close"></span></button></div><div id="device-list"></div>
+<details class="setup"><summary>连接另一台设备</summary><p>在目标设备把下面这句话发给 Agent，或按文档分步安装。</p><pre id="connect-code"></pre><p><a href="/docs/" target="_blank" rel="noopener">完整安装文档与 CLI 下载 ↗</a></p></details>
+<details class="setup"><summary>让 Agent 使用 Relay</summary><pre>relayctl skill install --target both</pre><p>在已配置 CLI 的设备上执行，重新打开 Agent 会话后即可使用 agent-bridge。</p></details></div></dialog>
+<dialog id="files-dialog" class="wide-dialog"><div class="dialog-content"><div class="dialog-heading"><h2>文件</h2><button type="button" class="icon-button" data-close="files-dialog" aria-label="关闭"><span data-icon="close"></span></button></div>
+<form id="file-form"><label for="file-device">来源设备</label><select id="file-device" required></select><label for="file-path">文件路径</label><div class="file-input-row"><input id="file-path" required placeholder="主目录相对路径或绝对路径"><button class="button primary" type="submit">取回</button></div><small>最大 16 MiB，文件经服务端中转。</small></form><div id="file-list" class="file-list"></div></div></dialog>
+<dialog id="account-dialog" class="wide-dialog"><div class="dialog-content"><div class="dialog-heading"><h2>账号与 SK</h2><button type="button" class="icon-button" data-close="account-dialog" aria-label="关闭"><span data-icon="close"></span></button></div>
+<p id="account-user"></p><p class="account-help">SK 用于 CLI 和 Agent，只能访问你自己的设备。完整密钥只显示一次。</p>
+<form id="key-form"><label for="key-name">密钥名称</label><input id="key-name" required maxlength="60" placeholder="例如：工作电脑"><div class="key-options"><div><label for="key-days">有效天数</label><input id="key-days" type="number" min="1" max="365" value="90" required></div></div><button class="button primary" type="submit">创建 SK</button></form>
+<div id="new-key" class="new-key" hidden><p>请立即保存，关闭后无法再次查看。</p><code id="new-key-secret"></code><button id="copy-key" type="button" class="button secondary">复制 SK</button></div><div id="key-list"></div>
+
+</div></dialog>
+<dialog id="image-dialog" class="image-dialog" aria-labelledby="image-title"><div class="dialog-content"><div class="dialog-heading"><h2 id="image-title">图片</h2><button type="button" class="icon-button" data-close="image-dialog" aria-label="关闭图片"><span data-icon="close"></span></button></div><div id="image-view"></div></div></dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

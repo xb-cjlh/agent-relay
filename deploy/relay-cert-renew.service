@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew Relay HTTPS certificate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=10min
+ExecStart=/opt/relay-certbot/bin/certbot renew --cert-name relay.example.com --quiet --no-random-sleep-on-renew --deploy-hook "/usr/sbin/nginx -t && /usr/sbin/nginx -s reload"
