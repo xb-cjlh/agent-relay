@@ -287,14 +287,30 @@ $('approval-list').addEventListener('click',async event => {
   }
 });
 
-function richText(text) {
-  const parts = String(text).split(/```([^\n`]*)\n([\s\S]*?)(?:```|$)/g);
-  return parts.map((part,i) => {
-    if (i % 3 === 1) return '';
-    if (i % 3 === 2) return `<div class="code-block"><div class="code-heading"><span>${esc(parts[i-1])}</span><button type="button" data-copy-code>复制</button></div><pre>${esc(part)}</pre></div>`;
-    return `<span class="prose">${esc(part).replace(/`([^`\n]+)`/g,'<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>')}</span>`;
-  }).join('');
-}
+// HTML stays literal; model output cannot introduce page elements or scripts.
+const markdown = window.markdownit({html:false, breaks:true, linkify:true}).disable('image');
+markdown.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
+  tokens[index].attrSet('target','_blank');
+  tokens[index].attrSet('rel','noopener noreferrer');
+  return renderer.renderToken(tokens,index,options);
+};
+markdown.renderer.rules.fence = (tokens, index) => {
+  const token = tokens[index];
+  const language = token.info.trim().split(/\s+/)[0];
+  return `<div class="code-block"><div class="code-heading"><span>${esc(language)}</span><button type="button" data-copy-code>复制</button></div><pre><code>${esc(token.content)}</code></pre></div>`;
+};
+markdown.renderer.rules.table_open = () => '<div class="markdown-table-wrap" tabindex="0" role="region" aria-label="表格"><table class="markdown-table">';
+markdown.renderer.rules.table_close = () => '</table></div>\n';
+// Table alignment uses classes so it also works under the page's strict CSP.
+for (const tag of ['th_open','td_open']) markdown.renderer.rules[tag] = (tokens, index, options, env, renderer) => {
+  const token = tokens[index], alignment = /^text-align:(left|center|right)$/.exec(token.attrGet('style') || '');
+  if (alignment) {
+    token.attrs = token.attrs.filter(([name]) => name !== 'style');
+    token.attrSet('class','markdown-align-' + alignment[1]);
+  }
+  return renderer.renderToken(tokens,index,options);
+};
+function richText(text) { return markdown.render(String(text)); }
 
 function renderMessages() {
   const container = $('messages'), agent = state.agents.find(a => a.id === selected);

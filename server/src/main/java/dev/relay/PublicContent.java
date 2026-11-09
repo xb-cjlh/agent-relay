@@ -21,6 +21,8 @@ final class PublicContent {
             Map.entry("/image-upload.js","static/image-upload.js"),
             Map.entry("/vendor/spark-md5.min.js","static/vendor/spark-md5.min.js"),
             Map.entry("/vendor/spark-md5.LICENSE","static/vendor/spark-md5.LICENSE"),
+            Map.entry("/vendor/markdown-it.min.js","static/vendor/markdown-it.min.js"),
+            Map.entry("/vendor/markdown-it.LICENSE","static/vendor/markdown-it.LICENSE"),
             Map.entry("/style.css","static/style.css"), Map.entry("/favicon.svg","static/favicon.svg"),
             Map.entry("/docs","static/docs.html"), Map.entry("/docs/","static/docs.html"),
             Map.entry("/docs.js","static/docs.js"), Map.entry("/docs.css","static/docs.css"),

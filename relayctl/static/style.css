@@ -87,6 +87,28 @@ input::placeholder, textarea::placeholder { color: #a7b19b; }
 .message.user { display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 27px; }
 .message.user .message-body { max-width: 85%; background: #f0f3eb; padding: 11px 18px; border-radius: 15px 15px 4px 15px; white-space: pre-wrap; }
 .message.assistant .message-body { color: #46533c; }
+.message.assistant .message-body h1, .message.assistant .message-body h2, .message.assistant .message-body h3, .message.assistant .message-body h4, .message.assistant .message-body h5, .message.assistant .message-body h6 { color: #394a31; font-weight: 600; line-height: 1.45; margin: 18px 0 8px; }
+.message.assistant .message-body h1 { font-size: 20px; }
+.message.assistant .message-body h2 { font-size: 18px; }
+.message.assistant .message-body h3 { font-size: 16px; }
+.message.assistant .message-body h4, .message.assistant .message-body h5, .message.assistant .message-body h6 { font-size: 14px; }
+.message.assistant .message-body > :first-child { margin-top: 0; }
+.message.assistant .message-body > :last-child { margin-bottom: 0; }
+.message.assistant .message-body p { margin: 0 0 12px; }
+.message.assistant .message-body ul, .message.assistant .message-body ol { margin: 8px 0 14px; padding-left: 24px; }
+.message.assistant .message-body li { margin: 3px 0; }
+.message.assistant .message-body blockquote { margin: 10px 0 14px; padding: 5px 14px; border-left: 3px solid #c7d5b9; color: #74836b; }
+.message.assistant .message-body blockquote > :last-child { margin-bottom: 0; }
+.message.assistant .message-body hr { border: 0; border-top: 1px solid #e4eadc; margin: 18px 0; }
+.message.assistant .message-body a { color: #53774f; text-decoration: underline; text-underline-offset: 2px; }
+.message.assistant .message-body s { color: #899483; }
+.markdown-table-wrap { max-width: 100%; overflow-x: auto; margin: 12px 0 16px; }
+.markdown-table { min-width: 420px; width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.65; }
+.markdown-table th, .markdown-table td { padding: 7px 10px; border: 1px solid #dfe7d8; text-align: left; vertical-align: top; min-width: 100px; }
+.markdown-table th { background: #f3f6ed; color: #53664b; font-weight: 600; }
+.markdown-table td { background: #fbfcf8; }
+.markdown-table .markdown-align-center { text-align: center; }
+.markdown-table .markdown-align-right { text-align: right; }
 .message-byline { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #92a180; margin-bottom: 9px; }
 .message-byline svg { width: 17px; height: 17px; }
 .message-byline time { margin-left: auto; color: #b1bba5; opacity: 0; }
@@ -98,9 +120,8 @@ input::placeholder, textarea::placeholder { color: #a7b19b; }
 .execution-details { color: #92998b; font-size: 12px; }
 .execution-details summary { cursor: pointer; }
 .execution-details pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
-.prose { white-space: pre-wrap; }
-.prose strong { font-weight: 600; }
-.prose code { font-size: .9em; padding: 2px 5px; border-radius: 4px; background: #f0f4e9; }
+.message.assistant .message-body strong { font-weight: 600; }
+.message.assistant .message-body :not(pre) > code { font-size: .9em; padding: 2px 5px; border-radius: 4px; background: #f0f4e9; }
 .code-block { background: #f6f8f1; border: 1px solid #e8edde; border-radius: 8px; margin: 13px 0; overflow: hidden; white-space: normal; }
 .code-heading { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e9eddf; padding: 6px 12px; color: #a4af94; font-size: 10px; }
 .code-heading button { border: 0; background: none; color: #8d9d7b; font-size: 10px; padding: 2px 0; }

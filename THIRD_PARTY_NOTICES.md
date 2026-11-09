@@ -3,6 +3,7 @@
 Relay is distributed under the [MIT License](LICENSE). Dependencies and bundled assets retain their own licenses.
 
 - **SparkMD5** — André Cruz and contributors, WTFPL Version 2. The bundled browser library is in `relayctl/static/vendor/spark-md5.min.js`; its full license is preserved in [`spark-md5.LICENSE`](relayctl/static/vendor/spark-md5.LICENSE). Source: https://github.com/satazor/js-spark-md5.
+- **markdown-it 15.0.3** — Vitaly Puzrin, Alex Kocharin and contributors, MIT. The bundled browser library is in `relayctl/static/vendor/markdown-it.min.js`; its license and the licenses of its bundled dependencies are preserved in [`markdown-it.LICENSE`](relayctl/static/vendor/markdown-it.LICENSE). Source: https://github.com/markdown-it/markdown-it.
 - **Gorilla WebSocket** — Gorilla WebSocket authors, BSD-2-Clause. The dependency is declared in `go.mod`; source and license: https://github.com/gorilla/websocket.
 - Java dependencies are declared in `server/pom.xml` and resolved by Maven with their original licenses, including Spring Boot, Spring Security Crypto, MySQL Connector/J, Flyway, Alibaba Cloud OSS SDK and their transitive dependencies.
 
