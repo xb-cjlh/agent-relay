@@ -20,7 +20,7 @@ class PermissionsCase(unittest.TestCase):
 
     def setup_job(self):
         _, device = self.register()
-        device.request('POST', '/api/device/poll', {'capabilities': {'codex': True, 'claude': True, 'writable': True, 'codex_permissions': True}})
+        device.request('POST', '/api/device/poll', {'capabilities': {'unlimited_tasks': True, 'codex': True, 'claude': True, 'writable': True, 'codex_permissions': True}})
         agent = self.create_agent()
         job = self.client.request('POST', '/api/jobs', {'kind': 'prompt', 'agent': agent['id'], 'prompt': 'fixture', 'permission_mode': 'ask'})
         device.request('POST', '/api/device/poll', {'capacity': 1})
@@ -31,23 +31,23 @@ class PermissionsCase(unittest.TestCase):
         agent = self.create_agent()
         body = {'kind': 'prompt', 'agent': agent['id'], 'prompt': 'fixture'}
         self.denied(409, self.client, 'POST', '/api/jobs', {**body, 'permission_mode': 'full'})
-        device.request('POST', '/api/device/poll', {'capabilities': {'codex': True, 'claude': True, 'writable': False, 'codex_permissions': True}})
+        device.request('POST', '/api/device/poll', {'capabilities': {'unlimited_tasks': True, 'codex': True, 'claude': True, 'writable': False, 'codex_permissions': True}})
         self.denied(403, self.client, 'POST', '/api/jobs', {**body, 'permission_mode': 'ask'})
-        device.request('POST', '/api/device/poll', {'capabilities': {'codex': True, 'claude': True, 'writable': True, 'codex_permissions': True}})
+        device.request('POST', '/api/device/poll', {'capabilities': {'unlimited_tasks': True, 'codex': True, 'claude': True, 'writable': True, 'codex_permissions': True}})
         for mode in ('ask', 'full'):
             result = self.client.request('POST', '/api/jobs', {**body, 'permission_mode': mode})
             self.assertEqual(result['payload']['permission_mode'], mode)
         self.denied(400, self.client, 'POST', '/api/jobs', {**body, 'permission_mode': 'typo'})
         claude = self.create_agent(name='claude', kind='claude')
         self.denied(409, self.client, 'POST', '/api/jobs', {**body, 'agent': claude['id'], 'permission_mode': 'full'})
-        device.request('POST', '/api/device/poll', {'capabilities': {'codex': True, 'claude': True, 'writable': True, 'codex_permissions': True, 'claude_permissions': True}})
+        device.request('POST', '/api/device/poll', {'capabilities': {'unlimited_tasks': True, 'codex': True, 'claude': True, 'writable': True, 'codex_permissions': True, 'claude_permissions': True}})
         for mode in ('ask', 'full'):
             result = self.client.request('POST', '/api/jobs', {**body, 'agent': claude['id'], 'permission_mode': mode})
             self.assertEqual(result['payload']['permission_mode'], mode)
 
     def test_claude_uses_same_approval_boundary_with_native_tool_details(self):
         _, device = self.register()
-        device.request('POST', '/api/device/poll', {'capabilities': {'claude': True, 'writable': True, 'claude_permissions': True}})
+        device.request('POST', '/api/device/poll', {'capabilities': {'unlimited_tasks': True, 'claude': True, 'writable': True, 'claude_permissions': True}})
         agent = self.create_agent(name='claude', kind='claude')
         job = self.client.request('POST', '/api/jobs', {'kind': 'prompt', 'agent': agent['id'], 'prompt': 'fixture', 'permission_mode': 'ask'})
         device.request('POST', '/api/device/poll', {'capacity': 1})

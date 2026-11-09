@@ -209,7 +209,7 @@ final class Store {
             String id = text(j.get("id")); double created = number(j.get("created_at"));
             var payload=object(decode(j.get("payload")));
             messages.add(map("id",id+":user","role","user","content",payload.get("prompt"),"images",payload.getOrDefault("images",List.of()),"created_at",created,"job_id",id,"status",j.get("status"),"error",j.get("error")));
-            messages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"created_at",created+0.000001,"job_id",id,"status",j.get("status"),"error",j.get("error")));
+            messages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"diagnostics",j.get("diagnostics"),"created_at",created+0.000001,"job_id",id,"status",j.get("status"),"error",j.get("error")));
             if (!TERMINAL.contains(j.get("status"))) active.add(map("id",id,"status",j.get("status")));
         }
         messages.sort(Comparator.<Map<String,Object>>comparingDouble(m -> number(m.get("created_at"))).thenComparing(m -> text(m.get("id"))));
@@ -269,11 +269,13 @@ final class Store {
             deviceId = text(a.get("device_id")); agentId = text(a.get("id"));
             String prompt=text(body.getOrDefault("prompt",""));
             if(prompt.isBlank()&&!attachments.isEmpty())prompt="请查看这些图片。";
-            payload = map("prompt",required(map("prompt",prompt),"prompt",32000),"timeout",integer(body.getOrDefault("timeout",300),1,1800,"timeout"));
+            int timeout=integer(body.getOrDefault("timeout",0),0,1800,"timeout");
+            var caps=object(decode(device(deviceId).get("capabilities")));
+            if(timeout==0&&!truth(caps.get("unlimited_tasks")))throw new ApiException(409,"目标设备仍有旧版执行时限，请升级 Relay CLI 至 0.6.1 并重启后台进程");
+            payload = map("prompt",required(map("prompt",prompt),"prompt",32000),"timeout",timeout);
             String mode=required(map("mode",body.getOrDefault("permission_mode","device")),"mode",20);
             if(!Set.of("device","ask","full").contains(mode))throw new ApiException("Agent 权限模式无效");
             if(!mode.equals("device")) {
-                var caps=object(decode(device(deviceId).get("capabilities")));
                 if(!truth(caps.get(a.get("kind")+"_permissions")))throw new ApiException(409,"请升级目标设备 Relay CLI 至 0.6.0 并重启后台进程");
                 if(!truth(caps.get("writable")))throw new ApiException(403,"请先在目标设备启用 --allow-agent-writes");
                 payload.put("permission_mode",mode);
@@ -350,7 +352,7 @@ final class Store {
         if (body.containsKey("roots") || body.containsKey("capabilities")) update("UPDATE devices SET roots=?,capabilities=? WHERE id=?",encode(roots(body.getOrDefault("roots",List.of()))),encode(object(body.get("capabilities"))),deviceId);
         for (Object entry : active) {
             var item = object(entry);
-            update("UPDATE jobs SET output=?,lease_until=? WHERE id=? AND device_id=? AND status IN ('running','cancelling')",tail(text(item.getOrDefault("output","")),MAX_OUTPUT),now()+60,item.get("id"),deviceId);
+            update("UPDATE jobs SET output=?,diagnostics=?,lease_until=? WHERE id=? AND device_id=? AND status IN ('running','cancelling')",tail(text(item.getOrDefault("output","")),MAX_OUTPUT),tail(text(item.getOrDefault("diagnostics","")),8000),now()+60,item.get("id"),deviceId);
         }
         var cancel = new ArrayList<Object>(); for (var j : rows("SELECT id FROM jobs WHERE device_id=? AND status='cancelling'",deviceId)) cancel.add(j.get("id"));
         int capacity = integer(body.getOrDefault("capacity",0),0,8,"capacity");
@@ -359,6 +361,10 @@ final class Store {
         var claimed = new ArrayList<Object>();
         for (var j : rows("SELECT * FROM jobs WHERE device_id=? AND status='queued' ORDER BY created_at,id FOR UPDATE",deviceId)) {
             if (claimed.size()>=slots) break;
+            if("prompt".equals(j.get("kind"))&&number(object(decode(j.get("payload"))).getOrDefault("timeout",0))==0&&!truth(object(decode(device(deviceId).get("capabilities"))).get("unlimited_tasks"))) {
+                update("UPDATE jobs SET status='failed',error=?,finished_at=? WHERE id=?","目标设备不支持无固定时限任务，请升级 Relay CLI 至 0.6.1 并重启后台进程；本次指令未执行",now(),j.get("id"));
+                continue;
+            }
             String agentId = (String) j.get("agent_id");
             if (agentId!=null) {
                 var a=agent(agentId);
@@ -399,7 +405,7 @@ final class Store {
             if (sid!=null) update("UPDATE agents SET session_id=? WHERE id=?",sid,j.get("agent_id"));
             update("UPDATE agents SET external_busy=0 WHERE id=?",j.get("agent_id"));
         }
-        update("UPDATE jobs SET status=?,output=?,error=?,finished_at=?,artifact_id=? WHERE id=?",status,output,error,now(),artifactId,jobId);
+        update("UPDATE jobs SET status=?,output=?,diagnostics=?,error=?,finished_at=?,artifact_id=? WHERE id=?",status,output,tail(text(body.getOrDefault("diagnostics","")),8000),error,now(),artifactId,jobId);
         return job(jobId);
     }
     Map<String,Object> cancel(String id) {

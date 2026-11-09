@@ -26,7 +26,7 @@ const usage = `Relay · 跨设备 Agent 管理（Go）
   daemon status|restart                         查看状态或重启已安装的后台服务
   serve [--host HOST] [--port 8765] [--data data] 启动 Java 服务端
   agents list|create                            列出或创建会话
-  send AGENT PROMPT [--wait] [--timeout 300]      发送指令（PROMPT 为 - 时读取 stdin）
+  send AGENT PROMPT [--wait] [--timeout SECONDS]  发送指令（默认无执行时限，0 表示不限）
   jobs list|show ID|wait ID|cancel ID             查询或取消任务
   files list|pull|download                       远程文件传输
   skill install [--target both|codex|claude] [--force] 安装或更新 skill
@@ -303,7 +303,7 @@ func Run(args []string) error {
 		if len(o.pos) != 2 {
 			return errors.New("用法: relayctl send AGENT PROMPT [--wait]")
 		}
-		timeout, e := o.integer("timeout", 300, 1, 1800)
+		timeout, e := o.integer("timeout", 0, 0, 1800)
 		if e != nil {
 			return e
 		}
@@ -323,7 +323,11 @@ func Run(args []string) error {
 			return e
 		}
 		if o.get("wait", "") == "true" {
-			j, e = c.Wait(str(j["id"]), time.Duration(timeout+60)*time.Second)
+			wait := time.Duration(0)
+			if timeout > 0 {
+				wait = time.Duration(timeout+60) * time.Second
+			}
+			j, e = c.Wait(str(j["id"]), wait)
 			if e != nil {
 				return e
 			}

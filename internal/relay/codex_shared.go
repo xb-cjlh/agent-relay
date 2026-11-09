@@ -189,11 +189,7 @@ func (t *Task) trySharedCodex(cwd string, writable bool) (result M, handled bool
 		}
 		return nil, false, nil
 	}
-	duration := time.Duration(num(obj(t.job["payload"])["timeout"])) * time.Second
-	if duration <= 0 {
-		duration = 300 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(t.ctx, duration)
+	ctx, cancel := t.executionContext()
 	defer cancel()
 	probe, stopProbe := context.WithTimeout(ctx, 5*time.Second)
 	rpc, connectErr := dialCodex(probe)

@@ -240,7 +240,7 @@ func (c *Client) Request(method, path string, body interface{}) (M, error) {
 }
 func (c *Client) Wait(id string, timeout time.Duration) (M, error) {
 	end := time.Now().Add(timeout)
-	for time.Now().Before(end) {
+	for timeout <= 0 || time.Now().Before(end) {
 		j, err := c.Request("GET", "/api/jobs/"+url.PathEscape(id), nil)
 		if err != nil {
 			return nil, err

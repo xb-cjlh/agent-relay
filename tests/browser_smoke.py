@@ -199,7 +199,7 @@ def main():
 
                 # Empty/offline devices remain selectable and never show another device's thread.
                 empty = client.request('POST', '/api/register', {'name':'empty-device', 'platform':'test',
-                    'capabilities':{'codex':True, 'access_scope':'user', 'home':str(remote)}})
+                    'capabilities':{'unlimited_tasks':True,'codex':True, 'access_scope':'user', 'home':str(remote)}})
                 server.database.execute('UPDATE devices SET last_seen=0 WHERE id=?', (empty['id'],))
                 expect(page.locator('#device-filter option')).to_have_count(4)
                 page.get_by_label('切换设备').select_option(empty['id'])

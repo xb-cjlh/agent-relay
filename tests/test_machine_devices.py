@@ -25,7 +25,7 @@ class MachineDevicesCase(unittest.TestCase):
         identity = self.client.request('POST', '/api/register', {
             'name': name, 'platform': 'test', 'machine_id': fingerprint,
             'roots': [str(self.root)] if roots is None else roots,
-            'capabilities': {'codex': True, 'claude': True},
+            'capabilities': {'unlimited_tasks': True, 'codex': True, 'claude': True},
         })
         return identity, Client(self.url, identity['token'])
 
@@ -71,7 +71,7 @@ class MachineDevicesCase(unittest.TestCase):
         device.request('POST', '/api/device/poll', {'sessions': [session]})
         agent = self.client.request('GET', '/api/state')['agents'][0]
         self.assert_conflict(lambda: self.prompt(agent))
-        device.request('POST', '/api/device/poll', {'capabilities': {'codex': True, 'access_scope': 'user'}})
+        device.request('POST', '/api/device/poll', {'capabilities': {'unlimited_tasks': True, 'codex': True, 'access_scope': 'user'}})
         upgraded = self.client.request('GET', '/api/state')['agents'][0]
         self.assertEqual(upgraded['id'], agent['id'])
         self.assertTrue(upgraded['controllable'])

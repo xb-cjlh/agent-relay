@@ -203,6 +203,7 @@ function renderHeader() {
   const running = activeJobs.some(j => ['running','cancelling'].includes(j.status));
   const busy = running || agent?.busy;
   const readOnly = agent && agent.controllable !== undefined && !agent.controllable;
+  const upgradeRequired = agent && !device?.capabilities.unlimited_tasks;
   $('conversation-status').innerHTML = agent ? `<span class="dot ${device?.online && connected ? busy ? 'busy' : 'online' : 'offline'}"></span>${!connected ? '连接中断' : !device?.online ? '设备离线' : approvals.length ? '等待审批' : busy ? '正在回复' : '在线'}` : '';
   const permissionCapable = device?.capabilities[agent?.kind + '_permissions'];
   const mode = $('permission-mode'), capable = permissionCapable && device?.capabilities.writable;
@@ -213,16 +214,16 @@ function renderHeader() {
   mode.value = capable && ['ask','full'].includes(savedMode) ? savedMode : 'device';
   mode.title = !permissionCapable ? '请升级目标设备 Relay 至 0.6.0 并重启后台进程' : !device?.capabilities.writable ? '请先在目标设备启用 --allow-agent-writes' : '执行权限从下一条消息生效';
   $('permission-note').hidden = mode.hidden || mode.value === 'device';
-  $('permission-note').textContent = mode.value === 'full' ? '完全访问：允许以设备用户权限访问文件和网络，不再逐项审批。仅对随后发送的消息生效。' : (agent?.kind === 'claude' ? '按需审批：遵循 Claude 本机权限规则，需要确认的工具调用会显示在此处。' : '按需审批：项目内操作可直接执行，需要额外权限时在此确认。') + '等待审批计入任务超时。';
+  $('permission-note').textContent = mode.value === 'full' ? '完全访问：允许以设备用户权限访问文件和网络，不再逐项审批。仅对随后发送的消息生效。' : (agent?.kind === 'claude' ? '按需审批：遵循 Claude 本机权限规则，需要确认的工具调用会显示在此处。' : '按需审批：项目内操作可直接执行，需要额外权限时在此确认。');
   $('prompt').disabled = !!readOnly;
-  $('send-button').disabled = sending || uploadingImages > 0 || !agent || readOnly || (!$('prompt').value.trim() && !(imageDrafts.get(selected)?.length));
+  $('send-button').disabled = sending || uploadingImages > 0 || !agent || readOnly || upgradeRequired || (!$('prompt').value.trim() && !(imageDrafts.get(selected)?.length));
   $('attach-image').disabled = sending || uploadingImages > 0 || !agent || readOnly || !device?.capabilities.image_input;
   $('attach-image').title = device?.capabilities.image_input ? '添加图片' : '请升级目标设备 Relay 至 0.5.0 并重启，以发送图片';
   renderAttachments();
   $('stop-generation').hidden = !activeJobs.some(j => j.status === 'running');
   const queued = activeJobs.filter(j => j.status === 'queued').length;
   const reason = {outside_roots:'设备端仍是旧版本，请更新 CLI 并重启后台进程。',cwd_missing:'工作目录已不存在。',cli_missing:'设备上未检测到对应的 Agent CLI。'};
-  $('queue-hint').textContent = !agent ? '' : readOnly ? '仅可查看 · ' + (reason[agent.control_reason] || '当前会话无法远程操作。') : !connected ? '连接恢复后会自动同步，输入的内容会保留。' : !device?.online ? '设备离线，发送的消息将在上线后执行。' : queued ? `${queued} 条消息等待执行，将按顺序继续对话。` : agent.external_busy ? '当前会话正在另一端回复，可以继续追加消息。' : '';
+  $('queue-hint').textContent = !agent ? '' : readOnly ? '仅可查看 · ' + (reason[agent.control_reason] || '当前会话无法远程操作。') : upgradeRequired ? '请将目标设备 Relay 升级至 0.6.1 并重启后台进程，以取消旧版执行时限。' : !connected ? '连接恢复后会自动同步，输入的内容会保留。' : !device?.online ? '设备离线，发送的消息将在上线后执行。' : queued ? `${queued} 条消息等待执行，将按顺序继续对话。` : agent.external_busy ? '当前会话正在另一端回复，可以继续追加消息。' : '';
 }
 
 async function loadConversation(before) {
@@ -308,15 +309,16 @@ function renderMessages() {
     if (node.dataset.signature !== signature) {
       node.className = 'message ' + message.role;
       let body;
-      const writerConflict = message.role === 'assistant' && message.status === 'failed' && agent?.kind === 'codex' && message.content?.includes('already has an active writer');
+      const writerConflict = message.role === 'assistant' && message.status === 'failed' && agent?.kind === 'codex' && [message.content,message.diagnostics].some(value=>value?.includes('already has an active writer'));
       const error = writerConflict && message.error?.includes('exit status') ? '更新并重启目标设备的 Relay 后，可通过 Codex 共享服务继续。若设备未提供共享服务，请先在本机退出这个会话再发送。' : message.error;
-      if (writerConflict) body = `<p class="session-conflict">本次指令未执行：原会话仍由本机 Codex 持有。</p><details class="execution-details"><summary>技术详情</summary><pre>${esc(message.content)}</pre></details>`;
+      if (writerConflict) body = `<p class="session-conflict">本次指令未执行：原会话仍由本机 Codex 持有。</p>${message.content ? `<details class="execution-details"><summary>技术详情</summary><pre>${esc(message.content)}</pre></details>` : ''}`;
       else if (message.content) body = message.role === 'user' ? esc(message.content) : richText(message.content);
       else if (['running','cancelling'].includes(message.status)) body = `<span class="typing">${message.status === 'cancelling' ? '正在停止…' : '正在回复…'}</span>`;
       else body = message.status === 'failed' ? '' : message.status === 'cancelled' ? '已停止。' : '本轮已结束，没有文本输出。';
       const queued = message.role === 'user' && message.status === 'queued';
       if (message.role === 'user' && message.images?.length) body += `<div class="message-images">${message.images.map(img => `<a href="/api/images/${encodeURIComponent(img.id)}" data-view-image="${esc(img.id)}" target="_blank" rel="noopener noreferrer"><img data-image-id="${esc(img.id)}" alt="${esc(img.name)}" loading="lazy" crossorigin="anonymous" referrerpolicy="no-referrer"></a>`).join('')}</div>`;
       node.innerHTML = `${message.role === 'assistant' ? `<div class="message-byline">${icon('agent')}<span>${kindName(agent?.kind)}</span><time>${date(message.created_at)}</time></div>` : ''}<div class="message-body">${body}</div>${queued ? `<div class="message-state">等待执行 <button data-cancel="${esc(message.job_id)}">取消</button></div>` : ''}${message.role === 'assistant' && message.content && ['running','cancelling'].includes(message.status) ? '<div class="message-state"><span class="dot busy"></span>正在回复</div>' : ''}${message.role === 'assistant' && error ? `<div class="message-error">${esc(error)}</div>` : ''}`;
+      if (message.role === 'assistant' && message.diagnostics) node.innerHTML += `<details class="execution-details"><summary>执行日志</summary><pre>${esc(message.diagnostics)}</pre></details>`;
       node.dataset.signature = signature;
     }
     if (node !== cursor) container.insertBefore(node,cursor);

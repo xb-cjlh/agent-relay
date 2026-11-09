@@ -51,11 +51,7 @@ func (t *Task) runOwnedCodex(cwd string, writable bool) (M, bool, error) {
 			<-done
 		}
 	}()
-	duration := time.Duration(num(obj(t.job["payload"])["timeout"])) * time.Second
-	if duration <= 0 {
-		duration = 300 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(t.ctx, duration)
+	ctx, cancel := t.executionContext()
 	defer cancel()
 	probe, stop := context.WithTimeout(ctx, 5*time.Second)
 	defer stop()

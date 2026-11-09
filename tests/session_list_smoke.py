@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory() as temp:
             devices=[]
             for name in ['work-computer-with-a-very-long-device-name','home-computer-with-a-very-long-device-name']:
                 identity=client.request('POST','/api/register',{'name':name,'platform':'test',
-                    'capabilities':{'codex':True,'claude':True,'access_scope':'user','home':str(root)}})
+                    'capabilities':{'unlimited_tasks':True,'codex':True,'claude':True,'access_scope':'user','home':str(root)}})
                 devices.append((identity,Client(url,identity['token'])))
             for index,(identity,device) in enumerate(devices):
                 sessions=[]

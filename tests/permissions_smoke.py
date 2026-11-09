@@ -22,7 +22,7 @@ def main():
                                        ('readonly', {'writable': False, 'codex_permissions': True})]:
                 devices[name] = client.request('POST', '/api/register', {
                     'name': name, 'platform': 'fixture', 'roots': [str(root)],
-                    'capabilities': {'codex': True, 'claude': True, **capabilities}})
+                    'capabilities': {'unlimited_tasks': True, 'codex': True, 'claude': True, **capabilities}})
             agents = {}
             for name, device_name, kind in [('codex', 'new', 'codex'), ('claude', 'new', 'claude'),
                                              ('old', 'old', 'codex'), ('readonly', 'readonly', 'codex')]:
@@ -46,6 +46,7 @@ def main():
                 expect(page.locator('#prompt')).to_be_empty()
                 job = next(j for j in client.request('GET', '/api/state')['jobs'] if j['agent_id'] == agents['codex']['id'])
                 assert job['payload']['permission_mode'] == 'ask'
+                assert job['payload']['timeout'] == 0
                 device.request('POST', '/api/device/poll', {'capacity': 1})
                 path = '/api/device/jobs/' + job['id'] + '/approvals'
                 aid = 'apr_' + 'f' * 48
@@ -75,7 +76,15 @@ def main():
                 page.locator('[data-decision="decline"]').click()
                 expect(page.locator('#approval-list')).not_to_be_visible()
                 assert device.request('GET', path + '/' + aid)['decision'] == 'decline'
-                device.request('POST', '/api/device/jobs/' + job['id'] + '/complete', {'status': 'succeeded', 'output': 'fixture done'})
+                diagnostic = 'OutputTextDelta without active item <img src=x onerror="window.diagnosticInjected=true">'
+                device.request('POST', '/api/device/jobs/' + job['id'] + '/complete', {'status': 'succeeded', 'output': 'fixture done', 'diagnostics': diagnostic})
+                expect(page.locator('#messages .execution-details summary')).to_have_text('执行日志')
+                expect(page.locator('#messages .execution-details pre')).not_to_be_visible()
+                assert 'OutputTextDelta' not in page.locator('#messages .message-body').all_text_contents()[-1]
+                page.locator('#messages .execution-details summary').click()
+                expect(page.locator('#messages .execution-details pre')).to_have_text(diagnostic)
+                assert page.locator('#messages .execution-details img').count() == 0
+                assert not page.evaluate('window.diagnosticInjected || false')
 
                 page.locator('[data-agent="' + agents['claude']['id'] + '"]').click()
                 page.locator('#permission-mode').select_option('ask')

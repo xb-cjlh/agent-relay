@@ -32,7 +32,7 @@ class AccountsCase(unittest.TestCase):
         return (browser or self.browser).request('POST','/api/agent/keys',{'name':'test','expiresInDays':30})
 
     def device(self, client, name='home'):
-        return client.request('POST','/api/register',{'name':name,'platform':'test','capabilities':{'codex':True,'claude':True,'image_input':True},'roots':[]})
+        return client.request('POST','/api/register',{'name':name,'platform':'test','capabilities':{'unlimited_tasks':True,'codex':True,'claude':True,'image_input':True},'roots':[]})
 
     def test_email_registration_cookie_login_logout_csrf_and_key_lifecycle(self):
         email='alice@example.com'

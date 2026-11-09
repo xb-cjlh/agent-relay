@@ -36,7 +36,7 @@ class ServerCase(unittest.TestCase):
     def register(self, name="home"):
         identity = self.client.request("POST", "/api/register", {
             "name": name, "platform": "test", "roots": [str(self.root)],
-            "capabilities": {"codex": True, "claude": True},
+            "capabilities": {"unlimited_tasks": True, "codex": True, "claude": True},
         })
         return identity, Client(self.url, identity["token"])
 

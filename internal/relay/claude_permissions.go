@@ -127,11 +127,7 @@ func (b *claudeApprovals) consume(line []byte) {
 }
 
 func (t *Task) runClaudeApprovals(cwd string) (M, error) {
-	duration := time.Duration(num(obj(t.job["payload"])["timeout"])) * time.Second
-	if duration <= 0 {
-		duration = 300 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(t.ctx, duration)
+	ctx, cancel := t.executionContext()
 	defer cancel()
 	args := commandFor(obj(t.job["agent"]), true, "ask")
 	cmd := exec.Command(args[0], args[1:]...)
@@ -148,7 +144,7 @@ func (t *Task) runClaudeApprovals(cwd string) (M, error) {
 	approvalCtx, stopApprovals := context.WithCancel(ctx)
 	b := &claudeApprovals{task: t, ctx: approvalCtx, cancel: stopApprovals, input: input, initialized: make(chan error, 1), requests: map[string]context.CancelFunc{}}
 	cmd.Stdout = &eventWriter{task: t, kind: "claude", line: b.consume}
-	cmd.Stderr = &eventWriter{task: t, kind: "claude"}
+	cmd.Stderr = diagnosticWriter{task: t}
 	if err = cmd.Start(); err != nil {
 		b.stop()
 		return nil, err

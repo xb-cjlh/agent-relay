@@ -74,6 +74,7 @@ type Task struct {
 	job                                  M
 	mu                                   sync.Mutex
 	output, partial, session, modelError string
+	diagnostics                          string
 	result                               M
 	cancel                               context.CancelFunc
 	ctx                                  context.Context
@@ -94,7 +95,26 @@ func (t *Task) progress() M {
 	if t.session != "" {
 		sid = t.session
 	}
-	return M{"id": t.job["id"], "output": tail(t.output+t.partial, MaxOutput), "session_id": sid}
+	return M{"id": t.job["id"], "output": tail(t.output+t.partial, MaxOutput), "diagnostics": t.diagnostics, "session_id": sid}
+}
+
+// Zero or an omitted timeout means a conversation runs until completion or
+// cancellation. Connection probes retain their own short deadlines.
+func (t *Task) executionContext() (context.Context, context.CancelFunc) {
+	duration := time.Duration(num(obj(t.job["payload"])["timeout"])) * time.Second
+	if duration <= 0 {
+		return context.WithCancel(t.ctx)
+	}
+	return context.WithTimeout(t.ctx, duration)
+}
+
+type diagnosticWriter struct{ task *Task }
+
+func (w diagnosticWriter) Write(data []byte) (int, error) {
+	w.task.mu.Lock()
+	w.task.diagnostics = tail(w.task.diagnostics+string(data), 8000)
+	w.task.mu.Unlock()
+	return len(data), nil
 }
 func (t *Task) consume(line []byte, kind string) {
 	var e M
@@ -102,7 +122,7 @@ func (t *Task) consume(line []byte, kind string) {
 	defer t.mu.Unlock()
 	appendText := func(s string) { t.output = tail(t.output+s, MaxOutput) }
 	if json.Unmarshal(line, &e) != nil {
-		appendText(string(line))
+		t.diagnostics = tail(t.diagnostics+string(line), 8000)
 		return
 	}
 	if kind == "codex" {
@@ -223,6 +243,7 @@ func (t *Task) run(roots []string, writable bool) {
 	}
 	progress := t.progress()
 	result["output"] = progress["output"]
+	result["diagnostics"] = progress["diagnostics"]
 	if progress["session_id"] != nil {
 		result["session_id"] = progress["session_id"]
 	}
@@ -323,33 +344,32 @@ func (t *Task) runAgent(roots []string, writable bool) (M, error) {
 	cmd.Stdin = strings.NewReader(t.agentInput(str(agent["kind"])))
 	writer := &eventWriter{task: t, kind: str(agent["kind"])}
 	cmd.Stdout = writer
-	cmd.Stderr = writer
+	cmd.Stderr = diagnosticWriter{task: t}
 	if err = cmd.Start(); err != nil {
 		return nil, err
 	}
 	wait := make(chan error, 1)
 	go func() { wait <- cmd.Wait() }()
-	duration := time.Duration(num(obj(t.job["payload"])["timeout"])) * time.Second
-	if duration <= 0 {
-		duration = 300 * time.Second
-	}
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
+	ctx, cancel := t.executionContext()
+	defer cancel()
 	var result M
 	select {
 	case err = <-wait:
-	case <-t.ctx.Done():
-		result = M{"status": "cancelled"}
-	case <-timer.C:
-		result = M{"status": "failed", "error": "执行超过任务时间限制"}
+	case <-ctx.Done():
+		if t.ctx.Err() != nil {
+			result = M{"status": "cancelled"}
+		} else {
+			result = M{"status": "failed", "error": fmt.Sprintf("执行达到设定的 %v 秒上限，已停止本轮", obj(t.job["payload"])["timeout"])}
+		}
 	}
 	if result != nil {
 		syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 		select {
 		case <-wait:
 		case <-time.After(2 * time.Second):
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			<-wait
 		}
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		return result, nil
 	}
 	if len(writer.buffer) > 0 {
@@ -362,7 +382,7 @@ func (t *Task) runAgent(roots []string, writable bool) (M, error) {
 		return nil, errors.New(modelError)
 	}
 	if err != nil {
-		if agent["kind"] == "codex" && strings.Contains(str(t.progress()["output"]), "already has an active writer") {
+		if agent["kind"] == "codex" && strings.Contains(str(t.progress()["diagnostics"]), "already has an active writer") {
 			return nil, errors.New("此 Codex 会话仍被本机进程占用，且无法连接持有它的共享服务；请在目标设备退出该会话后再发送，或使用支持共享服务的 Codex。无需删除会话或锁文件")
 		}
 		return nil, fmt.Errorf("Agent 执行失败: %w", err)
