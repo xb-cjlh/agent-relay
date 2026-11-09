@@ -210,7 +210,11 @@ function renderHeader() {
   mode.hidden = !agent;
   mode.options[0].textContent = device?.capabilities.writable ? '设备默认 · 可写' : '设备默认 · 只读';
   mode.options[1].disabled = mode.options[2].disabled = !capable;
-  const savedMode = sessionStorage.getItem('relay-permission-mode:' + selected) || 'full';
+  const modeKey = 'relay-permission-mode:' + selected;
+  let savedMode = sessionStorage.getItem(modeKey) || 'full';
+  // "device" was the old implicit default. Treat that legacy value as
+  // unset once, while preserving a device choice made after this change.
+  if (savedMode === 'device' && sessionStorage.getItem(modeKey + ':explicit') !== '1') savedMode = 'full';
   mode.value = capable && ['device','ask','full'].includes(savedMode) ? savedMode : 'device';
   mode.title = !permissionCapable ? '请升级目标设备 Relay 至 0.6.0 并重启后台进程' : !device?.capabilities.writable ? '请先在目标设备启用 --allow-agent-writes' : '执行权限从下一条消息生效';
   $('permission-note').hidden = mode.hidden || mode.value === 'device';
@@ -271,7 +275,11 @@ function renderApprovals() {
 }
 
 $('permission-mode').addEventListener('change',() => {
-  if (selected) sessionStorage.setItem('relay-permission-mode:' + selected,$('permission-mode').value);
+  if (selected) {
+    const key = 'relay-permission-mode:' + selected;
+    sessionStorage.setItem(key,$('permission-mode').value);
+    sessionStorage.setItem(key + ':explicit','1');
+  }
   renderHeader();
 });
 $('approval-list').addEventListener('click',async event => {
