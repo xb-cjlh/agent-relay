@@ -75,6 +75,10 @@ final class ApiController {
         else if(method.equals("GET")&&path.matches("/api/device/images/img_[a-zA-Z0-9]+"))return images.download(path.split("/")[4],deviceId);
         else if (method.equals("GET") && path.matches("/api/jobs/[^/]+")) result=store.job(path.split("/")[3]);
         else if (method.equals("POST") && path.matches("/api/jobs/[^/]+/cancel")) result=store.cancel(path.split("/")[3]);
+        else if (method.equals("POST") && path.matches("/api/jobs/[^/]+/approvals/[^/]+")) result=store.decideApproval(path.split("/")[3],path.split("/")[5],body);
+        else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/approvals")) result=store.requestApproval(deviceId,path.split("/")[4],body);
+        else if (method.equals("GET") && path.matches("/api/device/jobs/[^/]+/approvals/[^/]+")) result=store.approval(path.split("/")[4],path.split("/")[6],deviceId);
+        else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/approvals/[^/]+/expire")) result=store.expireApproval(path.split("/")[4],path.split("/")[6],deviceId);
         else if (method.equals("POST") && path.equals("/api/device/poll")) result=store.poll(deviceId,body);
         else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/complete")) result=store.complete(deviceId,path.split("/")[4],body);
         else if (method.equals("GET") && path.matches("/api/files/[^/]+")) {

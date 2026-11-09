@@ -30,6 +30,7 @@ let selected = sessionStorage.getItem('relay-selected') || '';
 let deviceFilter = sessionStorage.getItem('relay-device-filter') || '';
 let messages = new Map();
 let activeJobs = [];
+let approvals = [];
 let refreshing = false, generation = 0, conversationRequest = 0;
 let firstMessages = true, sending = false, connected = true, loadingOlder = false;
 let toastTimer;
@@ -66,7 +67,7 @@ async function logout(localOnly=false) {
   signedIn = false; currentUser = null; generation++; conversationRequest++;
   for (const upload of imageUploads) upload.abort();
   for (const key of Object.keys(sessionStorage)) if (key.startsWith('relay-')) sessionStorage.removeItem(key);
-  selected = ''; deviceFilter = ''; drafts.clear(); imageDrafts.clear(); imageUrls.clear(); messages.clear(); state={devices:[],agents:[],jobs:[],artifacts:[]};
+  selected = ''; deviceFilter = ''; drafts.clear(); imageDrafts.clear(); imageUrls.clear(); messages.clear(); activeJobs=[]; approvals=[]; renderApprovals(); state={devices:[],agents:[],jobs:[],artifacts:[]};
   showScreen('login');
   $('new-key-secret').textContent = ''; $('new-key').hidden = true;
   $('key-list').replaceChildren(); $('messages').replaceChildren(); $('attachment-list').replaceChildren();
@@ -176,7 +177,7 @@ function renderSessions() {
 
 function selectAgent(id,closeSidebar=true) {
   if (selected) { drafts.set(selected, $('prompt').value); sessionStorage.setItem('relay-draft:' + selected, $('prompt').value); }
-  selected = id; conversationRequest++; messages = new Map(); activeJobs = []; firstMessages = true;
+  selected = id; conversationRequest++; messages = new Map(); activeJobs = []; approvals = []; renderApprovals(); firstMessages = true;
   $('messages').replaceChildren(); $('new-messages').hidden = true; $('load-older').hidden = true;
   $('prompt').value = drafts.get(id) ?? sessionStorage.getItem('relay-draft:' + id) ?? '';
   sessionStorage.setItem('relay-selected', id);
@@ -202,7 +203,17 @@ function renderHeader() {
   const running = activeJobs.some(j => ['running','cancelling'].includes(j.status));
   const busy = running || agent?.busy;
   const readOnly = agent && agent.controllable !== undefined && !agent.controllable;
-  $('conversation-status').innerHTML = agent ? `<span class="dot ${device?.online && connected ? busy ? 'busy' : 'online' : 'offline'}"></span>${!connected ? '连接中断' : !device?.online ? '设备离线' : busy ? '正在回复' : '在线'}` : '';
+  $('conversation-status').innerHTML = agent ? `<span class="dot ${device?.online && connected ? busy ? 'busy' : 'online' : 'offline'}"></span>${!connected ? '连接中断' : !device?.online ? '设备离线' : approvals.length ? '等待审批' : busy ? '正在回复' : '在线'}` : '';
+  const permissionCapable = device?.capabilities[agent?.kind + '_permissions'];
+  const mode = $('permission-mode'), capable = permissionCapable && device?.capabilities.writable;
+  mode.hidden = !agent;
+  mode.options[0].textContent = device?.capabilities.writable ? '设备默认 · 可写' : '设备默认 · 只读';
+  mode.options[1].disabled = mode.options[2].disabled = !capable;
+  const savedMode = sessionStorage.getItem('relay-permission-mode:' + selected) || 'device';
+  mode.value = capable && ['ask','full'].includes(savedMode) ? savedMode : 'device';
+  mode.title = !permissionCapable ? '请升级目标设备 Relay 至 0.6.0 并重启后台进程' : !device?.capabilities.writable ? '请先在目标设备启用 --allow-agent-writes' : '执行权限从下一条消息生效';
+  $('permission-note').hidden = mode.hidden || mode.value === 'device';
+  $('permission-note').textContent = mode.value === 'full' ? '完全访问：允许以设备用户权限访问文件和网络，不再逐项审批。仅对随后发送的消息生效。' : (agent?.kind === 'claude' ? '按需审批：遵循 Claude 本机权限规则，需要确认的工具调用会显示在此处。' : '按需审批：项目内操作可直接执行，需要额外权限时在此确认。') + '等待审批计入任务超时。';
   $('prompt').disabled = !!readOnly;
   $('send-button').disabled = sending || uploadingImages > 0 || !agent || readOnly || (!$('prompt').value.trim() && !(imageDrafts.get(selected)?.length));
   $('attach-image').disabled = sending || uploadingImages > 0 || !agent || readOnly || !device?.capabilities.image_input;
@@ -228,13 +239,52 @@ async function loadConversation(before) {
     messages.set(message.id, message);
   }
   activeJobs = reply.active_jobs;
+  approvals = reply.approvals || [];
   if (before || firstMessages) $('load-older').hidden = !reply.has_more;
-  renderMessages(); renderHeader();
+  renderMessages(); renderApprovals(); renderHeader();
   if (before) scroller.scrollTop = oldTop + scroller.scrollHeight - oldHeight;
   else if (firstMessages || atBottom) scrollBottom();
   else if (changed) $('new-messages').hidden = false;
   firstMessages = false;
 }
+
+function renderApprovals() {
+  const container = $('approval-list');
+  const signature = JSON.stringify(approvals);
+  if (container.dataset.signature === signature) return;
+  container.dataset.signature = signature;
+  container.hidden = !approvals.length;
+  container.innerHTML = approvals.map(approval => {
+    const details = approval.details;
+    const title = approval.method === 'claude/tool/requestApproval' ? `允许 Claude 使用 ${details.tool_name || '工具'}？` : {'item/commandExecution/requestApproval':'允许执行此操作？','item/fileChange/requestApproval':'允许修改这些文件？','item/permissions/requestApproval':'允许本轮使用这些权限？'}[approval.method] || '需要你的审批';
+    const preview = details.command || details.item?.command || details.input?.command || '';
+    const extra = {};
+    for (const key of ['grantRoot','networkApprovalContext','additionalPermissions','permissions']) if (details[key]) extra[key] = details[key];
+    if (details.item?.changes) extra.changes = details.item.changes;
+    if (details.input) extra.input = details.input;
+    if (details.blocked_path) extra.blocked_path = details.blocked_path;
+    const options = details.availableDecisions;
+    const canAccept = !options?.length || options.includes('accept');
+    return `<section class="approval-card"><strong>${esc(title)}</strong>${details.reason ? `<p>${esc(details.reason)}</p>` : ''}${details.cwd ? `<p class="approval-cwd">${esc(details.cwd)}</p>` : ''}${preview ? `<pre>${esc(preview)}</pre>` : ''}${Object.keys(extra).length ? `<details${preview ? '' : ' open'}><summary>权限与变更详情</summary><pre>${esc(JSON.stringify(extra,null,2))}</pre></details>` : ''}<div class="approval-actions"><button type="button" class="button secondary" data-approval="${esc(approval.id)}" data-job="${esc(approval.job_id)}" data-decision="decline">拒绝</button>${canAccept ? `<button type="button" class="button primary" data-approval="${esc(approval.id)}" data-job="${esc(approval.job_id)}" data-decision="accept">允许此次操作</button>` : '<span>此请求不支持单次允许，请在本机处理。</span>'}</div></section>`;
+  }).join('');
+}
+
+$('permission-mode').addEventListener('change',() => {
+  if (selected) sessionStorage.setItem('relay-permission-mode:' + selected,$('permission-mode').value);
+  renderHeader();
+});
+$('approval-list').addEventListener('click',async event => {
+  const button = event.target.closest('[data-approval]');
+  if (!button) return;
+  const card = button.closest('.approval-card');
+  card.querySelectorAll('button').forEach(el => { el.disabled = true; });
+  try {
+    await api(`jobs/${encodeURIComponent(button.dataset.job)}/approvals/${encodeURIComponent(button.dataset.approval)}`,{decision:button.dataset.decision});
+    await loadConversation();
+  } catch(error) {
+    toast(error.message); card.querySelectorAll('button').forEach(el => { el.disabled = false; });
+  }
+});
 
 function richText(text) {
   const parts = String(text).split(/```([^\n`]*)\n([\s\S]*?)(?:```|$)/g);
@@ -366,7 +416,7 @@ $('send-form').addEventListener('submit',async e => {
   if ((!text && !images.length) || uploadingImages || !id || sending || $('prompt').disabled) return;
   sending = true; renderHeader();
   try {
-    await api('jobs',{kind:'prompt',agent:id,prompt:text,images:images.map(img=>img.id)});
+    await api('jobs',{kind:'prompt',agent:id,prompt:text,images:images.map(img=>img.id),permission_mode:$('permission-mode').hidden ? 'device' : $('permission-mode').value});
     imageDrafts.set(id,(imageDrafts.get(id)||[]).filter(img=>!images.some(sent=>sent.id===img.id)));
     if (selected === id && $('prompt').value.trim() === text) { $('prompt').value = ''; drafts.delete(id); sessionStorage.removeItem('relay-draft:' + id); }
     if (selected === id) { await loadConversation(); scrollBottom(); if (!matchMedia('(pointer: coarse)').matches) $('prompt').focus(); }

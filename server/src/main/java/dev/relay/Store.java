@@ -219,7 +219,9 @@ final class Store {
             String beforeId = parts.length==2 ? parts[1] : "";
             messages.removeIf(m -> number(m.get("created_at")) > before || (number(m.get("created_at")) == before && text(m.get("id")).compareTo(beforeId)>=0));
         }
-        return map("agent",agent,"messages",messages.subList(Math.max(0,messages.size()-100),messages.size()),"has_more",messages.size()>100,"active_jobs",active);
+        var approvals=rows("SELECT p.* FROM job_approvals p JOIN jobs j ON j.id=p.job_id WHERE j.agent_id=? AND p.decision='pending' AND j.status='running' ORDER BY p.created_at LIMIT 32",agent.get("id"));
+        for(var approval:approvals)approval.put("details",decode(approval.get("details")));
+        return map("agent",agent,"messages",messages.subList(Math.max(0,messages.size()-100),messages.size()),"has_more",messages.size()>100,"active_jobs",active,"approvals",approvals);
     }
     void syncSessions(String deviceId, Object value) {
         for (Object item : list(value,100)) {
@@ -268,6 +270,14 @@ final class Store {
             String prompt=text(body.getOrDefault("prompt",""));
             if(prompt.isBlank()&&!attachments.isEmpty())prompt="请查看这些图片。";
             payload = map("prompt",required(map("prompt",prompt),"prompt",32000),"timeout",integer(body.getOrDefault("timeout",300),1,1800,"timeout"));
+            String mode=required(map("mode",body.getOrDefault("permission_mode","device")),"mode",20);
+            if(!Set.of("device","ask","full").contains(mode))throw new ApiException("Agent 权限模式无效");
+            if(!mode.equals("device")) {
+                var caps=object(decode(device(deviceId).get("capabilities")));
+                if(!truth(caps.get(a.get("kind")+"_permissions")))throw new ApiException(409,"请升级目标设备 Relay CLI 至 0.6.0 并重启后台进程");
+                if(!truth(caps.get("writable")))throw new ApiException(403,"请先在目标设备启用 --allow-agent-writes");
+                payload.put("permission_mode",mode);
+            }
             if(!attachments.isEmpty())payload.put("images",attachments);
         } else if (kind.equals("file_read")) {
             var d=device(required(body,"device"));
@@ -277,6 +287,48 @@ final class Store {
         String id = id("job"); update("INSERT INTO jobs(id,device_id,agent_id,kind,payload,status,output,created_at) VALUES(?,?,?,?,?,'queued','',?)",id,deviceId,agentId,kind,encode(payload),now());
         for(Object value:attachments)storeImageJob(object(value),id);
         return job(id);
+    }
+    Map<String,Object> approval(String jobId,String approvalId,String deviceId) {
+        var job=job(jobId);
+        if(deviceId!=null&&!deviceId.equals(job.get("device_id")))throw new ApiException(404,"找不到审批请求");
+        var result=row("SELECT * FROM job_approvals WHERE id=? AND job_id=?",approvalId,jobId);
+        result.put("details",decode(result.get("details")));
+        if(!"running".equals(job.get("status")))result.put("decision","expired");
+        return result;
+    }
+    Map<String,Object> requestApproval(String deviceId,String jobId,Map<String,Object> body) {
+        var job=job(jobId);
+        if(!deviceId.equals(job.get("device_id")))throw new ApiException(404,"找不到任务");
+        if(!"running".equals(job.get("status")))throw new ApiException(409,"任务已停止，审批已失效");
+        if(!"ask".equals(object(job.get("payload")).get("permission_mode")))throw new ApiException(409,"任务未启用按需审批");
+        String id=required(body,"id",64),method=required(body,"method",80);
+        if(!id.matches("apr_[0-9a-f]{48}"))throw new ApiException("审批 ID 无效");
+        var methods="claude".equals(job.get("agent_kind")) ? Set.of("claude/tool/requestApproval") : Set.of("item/commandExecution/requestApproval","item/fileChange/requestApproval","item/permissions/requestApproval");
+        if(!methods.contains(method))throw new ApiException("不支持的审批类型");
+        var details=object(body.get("details"));String encoded=encode(details);
+        if(encoded.length()>64000)throw new ApiException(413,"审批内容过长，未授权执行");
+        var existing=rows("SELECT job_id,method,details FROM job_approvals WHERE id=?",id);
+        if(!existing.isEmpty()) {
+            var previous=existing.get(0);
+            if(!jobId.equals(previous.get("job_id"))||!method.equals(previous.get("method"))||!details.equals(object(decode(previous.get("details")))))throw new ApiException(409,"审批 ID 已被使用");
+        } else {
+            if(number(row("SELECT COUNT(*) n FROM job_approvals WHERE job_id=?",jobId).get("n"))>=200)throw new ApiException(409,"本轮审批请求过多");
+            update("INSERT INTO job_approvals(id,job_id,method,details,created_at) VALUES(?,?,?,?,?)",id,jobId,method,encoded,now());
+        }
+        return approval(jobId,id,deviceId);
+    }
+    Map<String,Object> decideApproval(String jobId,String approvalId,Map<String,Object> body) {
+        var current=approval(jobId,approvalId,null);
+        String decision=required(body,"decision",16);
+        if(!Set.of("accept","decline").contains(decision))throw new ApiException("审批决定无效");
+        if(!Set.of("pending",decision).contains(text(current.get("decision"))))throw new ApiException(409,"审批已处理或已失效");
+        update("UPDATE job_approvals SET decision=?,decided_at=? WHERE id=? AND decision='pending'",decision,now(),approvalId);
+        return approval(jobId,approvalId,null);
+    }
+    Map<String,Object> expireApproval(String jobId,String approvalId,String deviceId) {
+        approval(jobId,approvalId,deviceId);
+        update("UPDATE job_approvals SET decision='expired',decided_at=? WHERE id=? AND decision='pending'",now(),approvalId);
+        return map("ok",true);
     }
     void storeImageJob(Map<String,Object> image,String job) {update("UPDATE images SET job_id=? WHERE id=? AND owner_user_id=? AND job_id IS NULL",job,image.get("id"),owner());}
     Map<String,Object> poll(String deviceId, Map<String,Object> body) {

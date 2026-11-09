@@ -176,15 +176,15 @@ relayctl jobs cancel JOB_ID
 
 进程发现仍只读取当前用户的 PID 与可执行名称，不上传进程参数。无可恢复会话记录的进程不会伪装为可收发消息的会话。
 
-Relay 0.4 起，已有 Codex 会话若仍加载在本机共享服务中，Relay 通过该服务接续并收集流式回复，避免 `already has an active writer`。本机正在执行的轮次会先完成；取消只作用于 Relay 发起的轮次，不会关闭 Codex 服务。执行遵循 Relay 设备端读写设置，提交后立即恢复本机会话后续轮次的原权限，本轮仍使用 Relay 的权限。共享服务需支持独立更新后续轮次设置，已使用 Codex 0.166 / 0.167 的隔离实例验证。共享服务不可用或未加载该会话时仍使用 CLI；独立进程占用的会话需在本机退出后再从 Relay 继续。提交后断线不会自动换通道重试，需先核实原会话。升级 CLI 后重启 Relay 后台进程生效。
+Relay 0.4 起，已有 Codex 会话若仍加载在本机共享服务中，Relay 通过该服务接续并收集流式回复，避免 `already has an active writer`。本机正在执行的轮次会先完成；取消只作用于 Relay 发起的轮次，不会关闭 Codex 服务。执行使用本条消息选择的权限（默认遵循设备端读写设置），提交后立即恢复本机会话后续轮次的原权限。共享服务需支持独立更新后续轮次设置，已使用 Codex 0.166 / 0.167 的隔离实例验证。共享服务不可用或未加载该会话时，按需审批使用临时 app-server，其他模式使用 CLI；独立进程占用的会话需在本机退出后再从 Relay 继续。提交后断线不会自动换通道重试，需先核实原会话。升级 CLI 后重启 Relay 后台进程生效。
 
-新建会话通过设备端的 `codex exec --json` / `claude -p --output-format stream-json` 执行首条指令，记录会话 ID，后续使用 `resume`。已有原生会话直接使用原 ID 继续。空闲托管会话没有常驻模型子进程，收到任务时才启动。一个会话的任务串行执行，同一设备最多并行 4 个任务。
+新建会话通常通过设备端的 `codex exec --json` / `claude -p --output-format stream-json` 执行首条指令；Codex 按需审批使用 app-server，Claude 按需审批使用双向流式输入。均保留原生会话记录和 ID，后续可继续对话。已有原生会话直接使用原 ID 继续。空闲托管会话没有常驻模型子进程，收到任务时才启动。一个会话的任务串行执行，同一设备最多并行 4 个任务。
 
 任务输出每约 2 秒同步，网页每秒检查新消息。Claude 提供增量文本；Codex 随 CLI 的消息事件更新。保留最近 64,000 字符。默认执行上限 300 秒，可用 `relayctl send --timeout 600` 调整到最多 1800 秒。离线设备的任务保留在队列；执行中的设备失联超过 60 秒则标记失败，**不会自动重跑**。断联超过约 30 秒，后台进程会尝试停止正在执行的子进程。恢复后先核实原任务结果再重发，不能保证外部操作恰好执行一次。
 
 ### Agent 执行权限
 
-默认 Codex 使用 `read-only` sandbox 和 `approval_policy=never`；Claude 只提供 `Read,Glob,Grep` 工具并使用 `dontAsk`，不启用 MCP。两种 CLI 都不会使用跳过全部权限检查的选项。
+默认 Codex 使用 `read-only` sandbox 和 `approval_policy=never`；Claude 只提供 `Read,Glob,Grep` 工具并使用 `dontAsk`，不启用 MCP。默认模式不跳过全部权限检查。
 
 需要远程修改项目时，在设备侧明确启用：
 
@@ -195,6 +195,18 @@ relayctl daemon run --name home --allow-agent-writes
 此时 Codex 使用 `workspace-write`；Claude 使用完整内置工具，保留本机 settings、skills 和 MCP 配置，自动允许 `Read,Glob,Grep,Edit,Write,Bash`。本机配置中的禁止规则仍然生效；其他需要确认的工具遵循本机已有的允许规则，后台不会弹出终端确认。Claude 的 Bash 具有设备用户的权限。文件访问和 Agent 启动目录使用设备用户的系统权限，不设置 Relay 目录白名单。模型、CLI 配置、hooks 或 shell 的权限由设备用户及各工具配置决定。需强隔离时应在容器或独立系统用户下运行设备进程。
 
 后台自启同样使用 `relayctl daemon install --allow-agent-writes`。已有只读自启服务需要先 `relayctl daemon uninstall`，再用该命令安装，配置、设备身份和会话保留。仅 `daemon restart` 会沿用原来的只读设置。网页中的 Claude 提示“只有只读文件工具，不能运行代码”时，应检查目标设备是否启用了该选项。
+
+CLI **0.6.0** 起，网页输入框旁可为 Codex 和 Claude Code 选择权限，按会话记住选择，从**下一条发送的消息**生效；排队或正在执行的消息保留提交时的权限。
+
+| 网页选项 | Codex | Claude Code |
+| --- | --- | --- |
+| 设备默认 | 沿用设备只读或 `workspace-write`，不请求审批 | 沿用设备只读或上述工具允许列表 |
+| 按需审批 | `workspace-write` + `on-request`；项目内操作可直接执行，额外权限由网页审批 | 使用正常权限规则；需要确认的工具调用通过网页审批，保留本机 settings、skills 和 MCP |
+| 完全访问 | `danger-full-access` + `never` | `bypassPermissions`；本机和组织强制规则仍可能限制操作 |
+
+后两项要求目标设备已升级至 0.6.0，并以 `--allow-agent-writes` 启动；网页不能解除设备的只读限制。升级后执行 `relayctl daemon restart`。完全访问允许 Agent 以设备用户权限访问文件、运行命令和联网，仅应在信任该任务时选择。
+
+审批卡片展示命令、文件变更或工具参数，支持「允许此次操作」和「拒绝」，不会创建永久允许规则；Codex 的权限集合仅授权本轮。等待期间仍接收消息，刷新页面仍能看到未处理请求；取消、超时、失联或原工具撤回请求后审批失效。等待计入任务超时。Claude 已有的允许规则可直接放行，禁止规则不会被网页审批覆盖；`AskUserQuestion` 等需要填写答案的交互暂不支持。此功能处理从 Relay 发起的轮次，原生客户端自己发起的审批仍由原客户端处理。
 
 ## 安装 Agent 间通信 Skill
 
@@ -263,6 +275,10 @@ flowchart LR
 | `POST /api/jobs` | 发送指令 / 请求文件 | 登录 Cookie / 账号 SK |
 | `GET /api/jobs/:id` | 查询任务 | 登录 Cookie / 账号 SK |
 | `POST /api/jobs/:id/cancel` | 取消任务 | 登录 Cookie / 账号 SK |
+| `POST /api/jobs/:id/approvals/:approval` | 允许 / 拒绝本次操作 | 登录 Cookie / 账号 SK |
+| `POST /api/device/jobs/:id/approvals` | 创建审批请求 | 对应设备 |
+| `GET /api/device/jobs/:id/approvals/:approval` | 查询审批决定 | 对应设备 |
+| `POST /api/device/jobs/:id/approvals/:approval/expire` | 撤回未处理审批 | 对应设备 |
 | `GET /api/files/:id` | 下载文件 | 登录 Cookie / 账号 SK |
 | `POST /api/device/poll` | 心跳、进度、领取任务、接收取消 | 对应设备 |
 | `POST /api/device/jobs/:id/complete` | 回报结果与文件 | 对应设备 |
@@ -290,18 +306,22 @@ node --check relayctl/static/app.js
 
 ```bash
 python -m pip install playwright
-python -m playwright install chromium
+python -m playwright install chromium webkit
 python tests/browser_smoke.py
+python tests/permissions_smoke.py
 ```
 
 Java 单元测试覆盖参数校验和数据库不可用时的健康检查；Go 测试覆盖增量记录、半条 JSON、流式消息去重、跨目录访问和并发读取。集成测试启动真实 Java 服务端和两个独立 Go 设备进程，使用独立的临时 MySQL 数据库，配合模拟 Codex / Claude JSON 协议的可执行程序，覆盖任务续接、串行调度、取消、模型报错、失联租约、鉴权隔离、二进制传输、文件大小及跨目录访问。不会调用付费模型。真实 CLI 登录和具体版本的兼容性需在目标设备验证；安装好的 CLI 执行参数已对照本机 `--help`。
 
-可选的真实 Codex 协议兼容测试使用临时 `CODEX_HOME` 和本机模拟模型端点，验证写入冲突、原会话续聊、只读权限与本机权限恢复，不使用现有会话或付费模型：
+可选的真实 Codex 协议兼容测试使用临时 `CODEX_HOME` 和本机模拟模型端点，验证写入冲突、原会话续聊、允许／拒绝、完全访问、只读权限与本机权限恢复，不使用现有会话或付费模型：
 
 ```bash
-RELAY_CODEX_TEST=1 go test -race ./internal/relay -run TestSharedCodexAgainstRealCLI -count=1
+RELAY_CODEX_TEST=1 go test -race ./internal/relay -run 'TestSharedCodexAgainstRealCLI|TestCodexPermissionsAgainstRealCLI' -count=1
+RELAY_CLAUDE_TEST=1 go test -race ./internal/relay -run TestClaudePermissionsAgainstRealCLI -count=1
 # 可用 RELAY_CODEX_TEST_BINARY=/path/to/codex 指定设备上的共享服务版本
 ```
+
+权限协议参考：[Codex app-server](https://developers.openai.com/codex/app-server/)、[Claude Agent SDK permissions](https://platform.claude.com/docs/en/agent-sdk/permissions)。
 
 接入参考：[Codex non-interactive](https://developers.openai.com/codex/noninteractive/)、[Claude Code programmatic usage](https://code.claude.com/docs/en/headless)。执行参数也已使用本机 CLI 帮助核对。
 

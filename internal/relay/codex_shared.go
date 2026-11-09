@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -21,6 +22,7 @@ type codexRPC struct {
 	stopped chan struct{}
 	nextID  int
 	pending []M
+	writeMu sync.Mutex
 }
 
 func codexSocket() string {
@@ -32,7 +34,9 @@ func codexSocket() string {
 }
 
 func dialCodex(ctx context.Context) (*codexRPC, error) {
-	path := codexSocket()
+	return dialCodexPath(ctx, codexSocket())
+}
+func dialCodexPath(ctx context.Context, path string) (*codexRPC, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
@@ -72,6 +76,8 @@ func dialCodex(ctx context.Context) (*codexRPC, error) {
 
 func (r *codexRPC) close() { close(r.stopped); r.conn.Close() }
 func (r *codexRPC) write(value M) error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	r.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	return r.conn.WriteJSON(value)
 }
@@ -119,6 +125,9 @@ func (r *codexRPC) call(ctx context.Context, method string, params M) (M, error)
 func (r *codexRPC) rejectRequest(message M) error {
 	// Never grant new tool permissions or fabricate answers on the user's behalf.
 	method := str(message["method"])
+	if method == "item/permissions/requestApproval" {
+		return r.write(M{"id": message["id"], "result": M{"permissions": M{}, "scope": "turn"}})
+	}
 	if strings.HasSuffix(method, "/requestApproval") {
 		return r.write(M{"id": message["id"], "result": M{"decision": "decline"}})
 	}
@@ -170,7 +179,14 @@ func restoreCodexSettings(snapshot M, sid string) (M, error) {
 func (t *Task) trySharedCodex(cwd string, writable bool) (result M, handled bool, err error) {
 	agent := obj(t.job["agent"])
 	sid := str(agent["session_id"])
-	if agent["kind"] != "codex" || sid == "" {
+	if agent["kind"] != "codex" {
+		return nil, false, nil
+	}
+	mode := str(obj(t.job["payload"])["permission_mode"])
+	if sid == "" {
+		if mode == "ask" {
+			return t.runOwnedCodex(cwd, writable)
+		}
 		return nil, false, nil
 	}
 	duration := time.Duration(num(obj(t.job["payload"])["timeout"])) * time.Second
@@ -183,19 +199,34 @@ func (t *Task) trySharedCodex(cwd string, writable bool) (result M, handled bool
 	rpc, connectErr := dialCodex(probe)
 	if connectErr != nil {
 		stopProbe()
+		if mode == "ask" {
+			return t.runOwnedCodex(cwd, writable)
+		}
 		return nil, false, nil // No prompt was submitted. Older/standalone CLIs use exec.
 	}
 	defer rpc.close()
 	loaded, loadErr := rpc.loaded(probe, sid)
 	stopProbe()
 	if loadErr != nil || !loaded {
+		if mode == "ask" {
+			return t.runOwnedCodex(cwd, writable)
+		}
 		return nil, false, nil
 	}
+	return t.continueCodex(ctx, rpc, sid, cwd, writable, true)
+}
+
+func (t *Task) continueCodex(ctx context.Context, rpc *codexRPC, sid, cwd string, writable, shared bool, started ...M) (result M, handled bool, err error) {
 	handled = true
 	// Wait for the local turn without steering or cancelling work owned by another client.
 	var snapshot M
+	if len(started) > 0 {
+		snapshot = started[0]
+	}
 	for {
-		snapshot, err = rpc.call(ctx, "thread/resume", M{"threadId": sid, "excludeTurns": true})
+		if snapshot == nil {
+			snapshot, err = rpc.call(ctx, "thread/resume", M{"threadId": sid, "excludeTurns": true})
+		}
 		if err != nil {
 			if t.ctx.Err() != nil {
 				return M{"status": "cancelled"}, true, nil
@@ -220,10 +251,14 @@ func (t *Task) trySharedCodex(cwd string, writable bool) (result M, handled bool
 		case <-timer.C:
 		}
 		rpc.pending = nil // The local turn's messages are mirrored separately.
+		snapshot = nil
 	}
-	restore, err := restoreCodexSettings(snapshot, sid)
-	if err != nil {
-		return nil, true, err
+	var restore M
+	if shared {
+		restore, err = restoreCodexSettings(snapshot, sid)
+		if err != nil {
+			return nil, true, err
+		}
 	}
 	rpc.pending = nil
 	if ctx.Err() != nil {
@@ -233,17 +268,33 @@ func (t *Task) trySharedCodex(cwd string, writable bool) (result M, handled bool
 		return nil, true, errors.New("任务已超时，没有发送指令")
 	}
 	policy := M{"type": "readOnly"}
-	if writable {
+	codexMode := str(obj(t.job["payload"])["permission_mode"])
+	if codexMode == "" || codexMode == "device" {
+		codexMode = "device"
+	}
+	approvalPolicy := "never"
+	if writable || codexMode == "ask" {
 		policy = M{"type": "workspaceWrite", "writableRoots": []string{cwd}, "networkAccess": false}
 	}
+	if codexMode == "full" {
+		policy = M{"type": "dangerFullAccess"}
+	} else if codexMode == "ask" {
+		approvalPolicy = "on-request"
+	}
 	// Check that this daemon can restore future settings before submitting any input.
-	if _, err = rpc.call(ctx, "thread/settings/update", M{"threadId": sid}); err != nil {
-		return nil, true, fmt.Errorf("此 Codex 共享服务不支持独立设置后续轮次权限；请更新 Codex，或在本机退出此会话后再发送：%w", err)
+	if shared {
+		if _, err = rpc.call(ctx, "thread/settings/update", M{"threadId": sid}); err != nil {
+			return nil, true, fmt.Errorf("此 Codex 共享服务不支持独立设置后续轮次权限；请更新 Codex，或在本机退出此会话后再发送：%w", err)
+		}
 	}
 	// turn/start captures our sandbox for this turn. The settings update below
 	// restores only future turns, without broadening the running Relay turn.
 	restored := false
 	restorePolicy := func() error {
+		if !shared {
+			restored = true
+			return nil
+		}
 		cleanup, done := context.WithTimeout(context.Background(), 4*time.Second)
 		defer done()
 		_, restoreErr := rpc.call(cleanup, "thread/settings/update", restore)
@@ -267,7 +318,7 @@ func (t *Task) trySharedCodex(cwd string, writable bool) (result M, handled bool
 	// Once sent, wait briefly for the acknowledgement even if cancellation arrives,
 	// so cancellation can target the exact accepted turn instead of losing its ID.
 	ackCtx, doneAck := context.WithTimeout(context.Background(), 5*time.Second)
-	reply, err := rpc.call(ackCtx, "turn/start", M{"threadId": sid, "input": t.codexInput(), "approvalPolicy": "never", "sandboxPolicy": policy, "clientUserMessageId": "relay:" + str(t.job["id"])})
+	reply, err := rpc.call(ackCtx, "turn/start", M{"threadId": sid, "input": t.codexInput(), "approvalPolicy": approvalPolicy, "sandboxPolicy": policy, "clientUserMessageId": "relay:" + str(t.job["id"])})
 	doneAck()
 	if err != nil {
 		return nil, true, fmt.Errorf("向本机 Codex 提交指令时连接失败或请求被拒绝；未自动重试，请先核实原会话：%w", err)
@@ -302,6 +353,11 @@ func (t *Task) trySharedCodex(cwd string, writable bool) (result M, handled bool
 }
 
 func (t *Task) followCodexTurn(ctx context.Context, rpc *codexRPC, sid, turnID string) (M, error) {
+	ctx, stop := context.WithCancel(ctx)
+	requests := map[string]context.CancelFunc{}
+	items := map[string]M{}
+	var workers sync.WaitGroup
+	defer func() { stop(); workers.Wait() }()
 	for {
 		var message M
 		var err error
@@ -314,12 +370,41 @@ func (t *Task) followCodexTurn(ctx context.Context, rpc *codexRPC, sid, turnID s
 			}
 		}
 		params := obj(message["params"])
+		if message["method"] == "serverRequest/resolved" && params["threadId"] == sid {
+			key := fmt.Sprint(params["requestId"])
+			if cancel := requests[key]; cancel != nil {
+				cancel()
+				delete(requests, key)
+			}
+			continue
+		}
 		if params["threadId"] != sid {
 			continue
 		}
 		if message["id"] != nil && message["method"] != nil {
 			if params["turnId"] == turnID {
-				if err = rpc.rejectRequest(message); err != nil {
+				method := str(message["method"])
+				supported := method == "item/commandExecution/requestApproval" || method == "item/fileChange/requestApproval" || method == "item/permissions/requestApproval"
+				if str(obj(t.job["payload"])["permission_mode"]) == "ask" && supported {
+					key := fmt.Sprint(message["id"])
+					if requests[key] != nil {
+						continue
+					}
+					requestCtx, cancel := context.WithCancel(ctx)
+					requests[key] = cancel
+					details := M{}
+					for k, v := range params {
+						details[k] = v
+					}
+					if item := items[str(params["itemId"])]; item != nil {
+						details["item"] = item
+					}
+					workers.Add(1)
+					go func(message M, details M) {
+						defer workers.Done()
+						t.answerCodexApproval(requestCtx, rpc, message, details)
+					}(message, details)
+				} else if err = rpc.rejectRequest(message); err != nil {
 					return nil, err
 				}
 			}
@@ -342,6 +427,12 @@ func (t *Task) followCodexTurn(ctx context.Context, rpc *codexRPC, sid, turnID s
 		}
 		if params["turnId"] != turnID {
 			continue
+		}
+		if message["method"] == "item/started" {
+			item := obj(params["item"])
+			if len(items) < 200 {
+				items[str(item["id"])] = item
+			}
 		}
 		t.mu.Lock()
 		switch message["method"] {

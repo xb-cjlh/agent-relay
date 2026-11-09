@@ -32,6 +32,7 @@ python3 -m venv .venv
 .venv/bin/python -m playwright install chromium webkit
 .venv/bin/python tests/auth_loading_smoke.py
 .venv/bin/python tests/account_images_smoke.py
+.venv/bin/python tests/permissions_smoke.py
 ```
 
 测试默认使用模拟 Agent 和本机 HTTP/SMTP/OSS 协议服务，不需要云密钥或付费模型。`RELAY_CODEX_TEST=1`、`RELAY_CLAUDE_TEST=1` 才启用可选真实 CLI 协议测试，仍指向本机模拟模型；不要把用户会话作为测试输入。

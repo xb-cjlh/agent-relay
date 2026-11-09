@@ -16,7 +16,11 @@ import (
 	"time"
 )
 
-func commandFor(agent M, writable bool) []string {
+func commandFor(agent M, writable bool, modes ...string) []string {
+	codexMode := "device"
+	if len(modes) > 0 {
+		codexMode = modes[0]
+	}
 	sid := str(agent["session_id"])
 	if agent["kind"] == "codex" {
 		cmd := []string{"codex", "exec"}
@@ -24,17 +28,34 @@ func commandFor(agent M, writable bool) []string {
 			cmd = append(cmd, "resume")
 		}
 		sandbox := "read-only"
+		approval := "never"
 		if writable {
 			sandbox = "workspace-write"
 		}
-		cmd = append(cmd, "--json", "--skip-git-repo-check", "-c", `approval_policy="never"`, "-c", `sandbox_mode="`+sandbox+`"`)
+		if codexMode == "ask" {
+			sandbox = "workspace-write"
+			approval = "on-request"
+		} else if codexMode == "full" {
+			sandbox = "danger-full-access"
+		}
+		cmd = append(cmd, "--json", "--skip-git-repo-check", "-c", `approval_policy="`+approval+`"`, "-c", `sandbox_mode="`+sandbox+`"`)
 		if sid != "" {
 			cmd = append(cmd, sid)
 		}
 		return append(cmd, "-")
 	}
-	cmd := []string{"claude", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", "dontAsk"}
-	if writable {
+	permission := "dontAsk"
+	if codexMode == "ask" {
+		permission = "default"
+	} else if codexMode == "full" {
+		permission = "bypassPermissions"
+	}
+	cmd := []string{"claude", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", permission}
+	if codexMode == "ask" {
+		cmd = append(cmd, "--tools", "default", "--input-format", "stream-json", "--permission-prompt-tool", "stdio")
+	} else if codexMode == "full" {
+		cmd = append(cmd, "--tools", "default")
+	} else if writable {
 		// Keep Claude's normal tools, settings, skills and configured MCP servers.
 		// Approve the core coding tools because a background task cannot answer
 		// terminal prompts; local deny rules and MCP permissions still apply.
@@ -149,6 +170,7 @@ type eventWriter struct {
 	kind    string
 	buffer  []byte
 	discard bool
+	line    func([]byte)
 }
 
 func (w *eventWriter) Write(p []byte) (int, error) {
@@ -169,7 +191,11 @@ func (w *eventWriter) Write(p []byte) (int, error) {
 		}
 		if i >= 0 {
 			if !w.discard {
-				w.task.consume(w.buffer, w.kind)
+				if w.line != nil {
+					w.line(w.buffer)
+				} else {
+					w.task.consume(w.buffer, w.kind)
+				}
 			}
 			w.buffer = nil
 			w.discard = false
@@ -243,6 +269,15 @@ func (t *Task) readFile(roots []string) (M, error) {
 }
 func (t *Task) runAgent(roots []string, writable bool) (M, error) {
 	agent := obj(t.job["agent"])
+	mode := str(obj(t.job["payload"])["permission_mode"])
+	if mode != "" && mode != "device" {
+		if (agent["kind"] != "codex" && agent["kind"] != "claude") || (mode != "ask" && mode != "full") {
+			return nil, errors.New("不支持的 Agent 权限模式")
+		}
+		if !writable {
+			return nil, errors.New("设备未启用 --allow-agent-writes，不能变更 Agent 执行权限")
+		}
+	}
 	cwd, err := accessiblePath(str(agent["cwd"]), "")
 	if err != nil {
 		return nil, err
@@ -260,13 +295,20 @@ func (t *Task) runAgent(roots []string, writable bool) (M, error) {
 		}
 		return nil, err
 	}
+	if agent["kind"] == "claude" && mode == "ask" {
+		return t.runClaudeApprovals(cwd)
+	}
 	if result, handled, err := t.trySharedCodex(cwd, writable); handled {
 		return result, err
 	}
 	if t.ctx.Err() != nil {
 		return M{"status": "cancelled"}, nil
 	}
-	args := commandFor(agent, writable)
+	codexMode := str(obj(t.job["payload"])["permission_mode"])
+	if codexMode == "" || codexMode == "device" {
+		codexMode = "device"
+	}
+	args := commandFor(agent, writable, codexMode)
 	args = t.imageArgs(args, str(agent["kind"]))
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = cwd

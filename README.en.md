@@ -178,17 +178,17 @@ Session discovery scans approximately every 5 seconds. It discovers files in bat
 
 Process discovery reads only the current user's PIDs and executable names; command-line arguments are not uploaded. A process without recoverable session records is not presented as a conversation that can receive messages.
 
-Since Relay 0.4, if an existing Codex session is loaded in the local shared service, Relay continues it through that service and collects streaming replies, avoiding `already has an active writer`. An active local turn finishes first. Cancellation affects only Relay-initiated turns and does not close the Codex service. The submitted turn uses the daemon's read/write settings; immediately after submission, Relay restores the original permissions for subsequent local turns. The shared service must support independently updating settings for future turns. This has been verified with isolated Codex 0.166 / 0.167 instances.
+Since Relay 0.4, if an existing Codex session is loaded in the local shared service, Relay continues it through that service and collects streaming replies, avoiding `already has an active writer`. An active local turn finishes first. Cancellation affects only Relay-initiated turns and does not close the Codex service. Each submitted turn uses its selected permission mode (the daemon's read/write settings by default); immediately after submission, Relay restores the original permissions for subsequent local turns. The shared service must support independently updating settings for future turns. This has been verified with isolated Codex 0.166 / 0.167 instances.
 
-When the shared service is unavailable or has not loaded the session, Relay uses the CLI. If a separate process holds the session, exit it locally before continuing through Relay. A disconnect after submission does not automatically retry through another channel; verify the original turn's state first. Restart the Relay daemon after upgrading its CLI.
+When the shared service is unavailable or has not loaded the session, ask mode uses a temporary app-server and other modes use the CLI. If a separate process holds the session, exit it locally before continuing through Relay. A disconnect after submission does not automatically retry through another channel; verify the original turn's state first. Restart the Relay daemon after upgrading its CLI.
 
-New conversations begin with `codex exec --json` or `claude -p --output-format stream-json`. Relay records the returned session ID and uses `resume` for later turns. Existing native sessions use their original IDs. Idle managed conversations have no persistent model subprocess; one starts when a task arrives. Tasks run serially within a conversation, with up to 4 concurrent tasks per device.
+New conversations normally begin with `codex exec --json` or `claude -p --output-format stream-json`. Codex ask mode uses app-server, and Claude ask mode uses bidirectional streaming input. All modes retain native transcripts and session IDs for later continuation. Existing native sessions use their original IDs. Idle managed conversations have no persistent model subprocess; one starts when a task arrives. Tasks run serially within a conversation, with up to 4 concurrent tasks per device.
 
 Task output synchronizes approximately every 2 seconds, and the web interface checks for new messages every second. Claude provides incremental text; Codex updates follow its CLI message events. Up to 64,000 output characters are retained. The default execution timeout is 300 seconds; `relayctl send --timeout 600` can raise it to a maximum of 1800 seconds. Tasks for offline devices remain queued. If a running device loses contact for over 60 seconds, its task fails and **is not automatically retried**. After roughly 30 seconds of disconnection, the daemon attempts to stop its running subprocesses. Verify a task's outcome before resubmitting it: external actions cannot be guaranteed to execute exactly once.
 
 ### Agent execution permissions
 
-By default, Codex uses the `read-only` sandbox with `approval_policy=never`. Claude uses `dontAsk`, provides only `Read,Glob,Grep`, and disables MCP. Neither CLI is launched with an option that bypasses all permission checks.
+By default, Codex uses the `read-only` sandbox with `approval_policy=never`. Claude uses `dontAsk`, provides only `Read,Glob,Grep`, and disables MCP. The default mode does not bypass all permission checks.
 
 To allow remote project changes, explicitly enable writes on the device:
 
@@ -199,6 +199,18 @@ relayctl daemon run --name home --allow-agent-writes
 Codex then uses `workspace-write`. Claude receives its full built-in tool set, retains local settings, skills, and MCP configuration, and automatically allows `Read,Glob,Grep,Edit,Write,Bash`. Existing local deny rules still apply. Other tools requiring approval follow the local allow rules; the daemon does not display interactive terminal approval prompts. Claude's Bash runs with the device user's permissions. File access and agent working directories follow operating system permissions, without a Relay directory allowlist. Model behavior, CLI configuration, hooks, and shells remain subject to the device user's and tool's settings. Use a container or separate operating system user when stronger isolation is needed.
 
 For automatic startup, use `relayctl daemon install --allow-agent-writes`. To replace an existing read-only service, run `relayctl daemon uninstall` and reinstall with that option; configuration, device identity, and sessions are preserved. `daemon restart` alone retains the service's existing read-only settings. If a web-launched Claude session reports that it can only read files and cannot run code, check this option on the target device.
+
+Starting with CLI **0.6.0**, the web composer provides a permission selector for both Codex and Claude Code. Each conversation remembers its choice. It applies to the **next submitted message**; queued and running messages keep their original permission snapshot.
+
+| Web option | Codex | Claude Code |
+| --- | --- | --- |
+| Device default | Device read-only or `workspace-write`, without approval requests | Device read-only or the tool allowlist described above |
+| Ask for approval | `workspace-write` + `on-request`; project operations may run directly, while extra permissions require web approval | Normal permission rules; tools requiring confirmation appear in the web interface, preserving local settings, skills, and MCP |
+| Full access | `danger-full-access` + `never` | `bypassPermissions`; local and organization policies may still restrict operations |
+
+Ask and full access require the target device to run CLI 0.6.0 with `--allow-agent-writes`. The web interface cannot override a read-only device. Run `relayctl daemon restart` after upgrading. Full access allows file access, commands, and networking as the device user; select it only for trusted tasks.
+
+Approval cards show the command, file changes, or tool arguments and offer a single-operation allow or deny. They never save persistent allow rules; Codex permission sets are granted only for the current turn. Streaming continues while waiting, and pending requests survive page refreshes. Cancellation, timeouts, device lease loss, and requests withdrawn by the native tool invalidate pending approvals. Waiting counts toward the job timeout. Claude's existing allow rules may allow tools directly, and its deny rules cannot be overridden by browser approval. Interactions requiring typed answers, such as `AskUserQuestion`, are not yet supported. The bridge handles Relay-initiated turns; approvals belonging to native clients remain with those clients.
 
 ## Install the agent-to-agent skill
 
@@ -267,6 +279,10 @@ flowchart LR
 | `POST /api/jobs` | Send instructions or request a file | Login cookie / account SK |
 | `GET /api/jobs/:id` | Retrieve a job | Login cookie / account SK |
 | `POST /api/jobs/:id/cancel` | Cancel a job | Login cookie / account SK |
+| `POST /api/jobs/:id/approvals/:approval` | Allow / deny an operation | Login cookie / account SK |
+| `POST /api/device/jobs/:id/approvals` | Create an approval request | Corresponding device token |
+| `GET /api/device/jobs/:id/approvals/:approval` | Read the decision | Corresponding device token |
+| `POST /api/device/jobs/:id/approvals/:approval/expire` | Withdraw a pending request | Corresponding device token |
 | `GET /api/files/:id` | Download a file | Login cookie / account SK |
 | `POST /api/device/poll` | Heartbeats, progress, task pickup, and cancellation delivery | Corresponding device token |
 | `POST /api/device/jobs/:id/complete` | Report results and files | Corresponding device token |
@@ -306,8 +322,9 @@ Optional browser end-to-end tests require Playwright and Chromium. On macOS, the
 
 ```bash
 python -m pip install -r tests/requirements.txt
-python -m playwright install chromium
+python -m playwright install chromium webkit
 python tests/browser_smoke.py
+python tests/permissions_smoke.py
 ```
 
 To run the login-loading and account/image regressions used in CI, install WebKit as well:
@@ -320,12 +337,15 @@ python tests/account_images_smoke.py
 
 Java unit tests cover parameter validation and health checks when the database is unavailable. Go tests cover incremental records, incomplete JSON, streaming-message deduplication, access across directories, and concurrent reads. Integration tests start a real Java server and separate Go device daemons against temporary MySQL databases. Executables simulating Codex / Claude JSON protocols exercise conversation continuation, serial scheduling, cancellation, model errors, expired leases, authorization isolation, binary transfer, file-size limits, and directory access. They do not call paid models. Verify real CLI authentication and version compatibility on the target device; execution arguments have also been checked against the installed CLIs' `--help` output.
 
-Optional compatibility tests against the real Codex CLI use a temporary `CODEX_HOME` and a local mock model endpoint. They verify writer conflicts, continuation of existing sessions, read-only permissions, and restoration of local permissions without using personal sessions or paid models:
+Optional compatibility tests against the real Codex CLI use a temporary `CODEX_HOME` and a local mock model endpoint. They verify writer conflicts, continuation of existing sessions, approval allow/deny, full access, read-only permissions, and restoration of local permissions without using personal sessions or paid models:
 
 ```bash
-RELAY_CODEX_TEST=1 go test -race ./internal/relay -run TestSharedCodexAgainstRealCLI -count=1
+RELAY_CODEX_TEST=1 go test -race ./internal/relay -run 'TestSharedCodexAgainstRealCLI|TestCodexPermissionsAgainstRealCLI' -count=1
+RELAY_CLAUDE_TEST=1 go test -race ./internal/relay -run TestClaudePermissionsAgainstRealCLI -count=1
 # Set RELAY_CODEX_TEST_BINARY=/path/to/codex to select a shared-service version.
 ```
+
+Permission protocols: [Codex app-server](https://developers.openai.com/codex/app-server/) and [Claude Agent SDK permissions](https://platform.claude.com/docs/en/agent-sdk/permissions).
 
 Integration references: [Codex non-interactive](https://developers.openai.com/codex/noninteractive/) and [Claude Code programmatic usage](https://code.claude.com/docs/en/headless).
 

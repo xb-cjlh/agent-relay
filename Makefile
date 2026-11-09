@@ -6,7 +6,7 @@ cli:
 	go build -o bin/relayctl ./cmd/relayctl
 
 downloads:
-	python3 scripts/build_downloads.py --version $(or $(VERSION),0.5.3)
+	python3 scripts/build_downloads.py --version $(or $(VERSION),0.6.0)
 
 server:
 	mvn -B -f server/pom.xml package

@@ -94,13 +94,17 @@ func (t *Task) agentInput(kind string) string {
 	if kind != "claude" || len(t.images) == 0 {
 		return prompt
 	}
+	b, _ := json.Marshal(t.claudeInput())
+	return string(b) + "\n"
+}
+func (t *Task) claudeInput() M {
+	prompt := str(obj(t.job["payload"])["prompt"])
 	content := []M{}
 	for _, img := range t.images {
 		content = append(content, M{"type": "image", "source": M{"type": "base64", "media_type": img.mime, "data": img.data}})
 	}
 	content = append(content, M{"type": "text", "text": prompt})
-	b, _ := json.Marshal(M{"type": "user", "message": M{"role": "user", "content": content}})
-	return string(b) + "\n"
+	return M{"type": "user", "message": M{"role": "user", "content": content}}
 }
 func (t *Task) imageArgs(args []string, kind string) []string {
 	if len(t.images) == 0 {
