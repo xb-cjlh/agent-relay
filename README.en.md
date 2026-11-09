@@ -210,6 +210,8 @@ Starting with CLI **0.6.0**, the web composer provides a permission selector for
 
 Ask and full access require the target device to run CLI 0.6.0 with `--allow-agent-writes`. The web interface cannot override a read-only device. Run `relayctl daemon restart` after upgrading. Full access allows file access, commands, and networking as the device user; select it only for trusted tasks.
 
+The web composer defaults to **Full access** on devices that support permission selection and allow writes. Manual choices are remembered per conversation in the current browser tab. Older or read-only devices use **Device default**. The CLI's default permissions are unchanged.
+
 Approval cards show the command, file changes, or tool arguments and offer a single-operation allow or deny. They never save persistent allow rules; Codex permission sets are granted only for the current turn. Streaming continues while waiting, and pending requests survive page refreshes. Cancellation, timeouts, device lease loss, and requests withdrawn by the native tool invalidate pending approvals. When an explicit job timeout is set, approval waiting counts toward it; otherwise there is no fixed deadline. Claude's existing allow rules may allow tools directly, and its deny rules cannot be overridden by browser approval. Interactions requiring typed answers, such as `AskUserQuestion`, are not yet supported. The bridge handles Relay-initiated turns; approvals belonging to native clients remain with those clients.
 
 ## Install the agent-to-agent skill

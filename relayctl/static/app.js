@@ -210,8 +210,8 @@ function renderHeader() {
   mode.hidden = !agent;
   mode.options[0].textContent = device?.capabilities.writable ? '设备默认 · 可写' : '设备默认 · 只读';
   mode.options[1].disabled = mode.options[2].disabled = !capable;
-  const savedMode = sessionStorage.getItem('relay-permission-mode:' + selected) || 'device';
-  mode.value = capable && ['ask','full'].includes(savedMode) ? savedMode : 'device';
+  const savedMode = sessionStorage.getItem('relay-permission-mode:' + selected) || 'full';
+  mode.value = capable && ['device','ask','full'].includes(savedMode) ? savedMode : 'device';
   mode.title = !permissionCapable ? '请升级目标设备 Relay 至 0.6.0 并重启后台进程' : !device?.capabilities.writable ? '请先在目标设备启用 --allow-agent-writes' : '执行权限从下一条消息生效';
   $('permission-note').hidden = mode.hidden || mode.value === 'device';
   $('permission-note').textContent = mode.value === 'full' ? '完全访问：允许以设备用户权限访问文件和网络，不再逐项审批。仅对随后发送的消息生效。' : (agent?.kind === 'claude' ? '按需审批：遵循 Claude 本机权限规则，需要确认的工具调用会显示在此处。' : '按需审批：项目内操作可直接执行，需要额外权限时在此确认。');

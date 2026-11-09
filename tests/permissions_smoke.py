@@ -38,13 +38,24 @@ def main():
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.goto(base)
                 server.browser_login(page)
+                # Eligible sessions default to full access and submit that mode.
+                for kind in ('codex', 'claude'):
+                    page.locator('[data-agent="' + agents[kind]['id'] + '"]').click()
+                    expect(page.locator('#permission-mode')).to_have_value('full')
+                    page.locator('#prompt').fill(kind + ' default full fixture')
+                    page.locator('#send-button').click()
+                    expect(page.locator('#prompt')).to_be_empty()
+                    default_job = next(j for j in client.request('GET', '/api/state')['jobs'] if j['agent_id'] == agents[kind]['id'])
+                    assert default_job['payload']['permission_mode'] == 'full'
+                    device.request('POST', '/api/device/poll', {'capacity': 1})
+                    device.request('POST', '/api/device/jobs/' + default_job['id'] + '/complete', {'status': 'succeeded', 'output': 'default full fixture done'})
                 page.locator('[data-agent="' + agents['codex']['id'] + '"]').click()
                 expect(page.locator('#permission-mode')).to_be_visible()
                 page.locator('#permission-mode').select_option('ask')
                 page.locator('#prompt').fill('approval fixture')
                 page.locator('#send-button').click()
                 expect(page.locator('#prompt')).to_be_empty()
-                job = next(j for j in client.request('GET', '/api/state')['jobs'] if j['agent_id'] == agents['codex']['id'])
+                job = next(j for j in client.request('GET', '/api/state')['jobs'] if j['payload'].get('prompt') == 'approval fixture')
                 assert job['payload']['permission_mode'] == 'ask'
                 assert job['payload']['timeout'] == 0
                 device.request('POST', '/api/device/poll', {'capacity': 1})
@@ -71,7 +82,12 @@ def main():
                 page.locator('[data-agent="' + agents['claude']['id'] + '"]').click()
                 expect(page.locator('#approval-list')).not_to_be_visible()
                 expect(page.locator('#permission-mode')).to_be_visible()
+                expect(page.locator('#permission-mode')).to_have_value('full')
+                page.locator('#permission-mode').select_option('device')
+                page.reload()
+                expect(page.locator('#permission-mode')).to_have_value('device')
                 page.locator('[data-agent="' + agents['codex']['id'] + '"]').click()
+                expect(page.locator('#permission-mode')).to_have_value('ask')
                 expect(page.locator('#approval-list')).to_be_visible()
                 page.locator('[data-decision="decline"]').click()
                 expect(page.locator('#approval-list')).not_to_be_visible()
@@ -91,7 +107,7 @@ def main():
                 page.locator('#prompt').fill('Claude approval fixture')
                 page.locator('#send-button').click()
                 expect(page.locator('#prompt')).to_be_empty()
-                claude_job = next(j for j in client.request('GET', '/api/state')['jobs'] if j['agent_id'] == agents['claude']['id'])
+                claude_job = next(j for j in client.request('GET', '/api/state')['jobs'] if j['payload'].get('prompt') == 'Claude approval fixture')
                 assert claude_job['payload']['permission_mode'] == 'ask'
                 device.request('POST', '/api/device/poll', {'capacity': 1})
                 claude_path = '/api/device/jobs/' + claude_job['id'] + '/approvals'
@@ -124,6 +140,7 @@ def main():
                 assert client.request('GET', '/api/jobs/' + full['id'])['payload']['permission_mode'] == 'full'
                 for name in ('old', 'readonly'):
                     page.locator('[data-agent="' + agents[name]['id'] + '"]').click()
+                    expect(page.locator('#permission-mode')).to_have_value('device')
                     assert page.locator('#permission-mode option[value=ask]').is_disabled()
                     assert page.locator('#permission-mode option[value=full]').is_disabled()
                 assert not errors, errors
@@ -135,6 +152,7 @@ def main():
                 safari.goto(base)
                 safari.locator('[data-agent="' + agents['codex']['id'] + '"]').evaluate('(button)=>button.click()')
                 expect(safari.locator('#permission-mode')).to_be_visible()
+                expect(safari.locator('#permission-mode')).to_have_value('full')
                 assert safari.locator('#permission-mode').evaluate('(el)=>parseFloat(getComputedStyle(el).fontSize)') >= 16
                 expect(safari.locator('#send-button')).to_be_in_viewport()
                 webkit.close()
