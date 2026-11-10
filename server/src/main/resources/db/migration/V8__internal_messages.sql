@@ -1,0 +1,2 @@
+ALTER TABLE messages
+ ADD COLUMN internal INT NOT NULL DEFAULT 0;

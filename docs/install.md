@@ -28,6 +28,15 @@ Relay 使用独立账号体系，与知屿等应用的账号无关。注册需�
 
 ## 2. 让 Agent 一句话安装
 
+CLI 0.6.2 起，Codex 的上下文压缩摘要和 Claude 的内部续聊摘要不会显示为普通消息。旧设备更新后重启后台进程：
+
+```bash
+curl -fsSL https://relay.chaojibot.com/install.sh | bash -s -- --cli-only
+"$HOME/.local/bin/relayctl" daemon restart
+```
+
+更新保留设备身份、会话和原有访问设置；重启前等待当前 Relay 任务执行完成。
+
 在目标设备的 Codex 或 Claude Code 中发送：
 
 > 请阅读 https://relay.chaojibot.com/install-agent.md，帮我安装并连接 Relay CLI 和 agent-bridge skill，设置后台自启并同步整机会话，令牌优先复用本机已有配置，没有则提示我在终端隐藏输入。

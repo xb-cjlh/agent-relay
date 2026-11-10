@@ -155,6 +155,53 @@ func TestClaudeMirrorFiltersThinkingToolsAndSubagents(t *testing.T) {
 		t.Fatal("assistant text missing")
 	}
 }
+func TestMirrorMarksCompactionSummariesWithoutUploadingTheirText(t *testing.T) {
+	for _, kind := range []string{"codex", "claude"} {
+		t.Run(kind, func(t *testing.T) {
+			m, shared, _ := fixtureMirror(t)
+			text := "## Task and authorization\n\nPublic text may use this heading too."
+			var public, internal M
+			if kind == "codex" {
+				public = M{"type": "response_item", "payload": M{"type": "message", "role": "assistant", "phase": "final_answer", "content": []M{{"type": "output_text", "text": text}}}}
+				internal = copyMap(public)
+				internal["metadata"] = M{"compaction_output": true, "client_authored": false}
+			} else {
+				public = M{"type": "assistant", "sessionId": "summary-session", "cwd": shared, "uuid": "public", "message": M{"content": []M{{"type": "text", "text": text}}, "stop_reason": "end_turn"}}
+				internal = M{"type": "user", "sessionId": "summary-session", "cwd": shared, "uuid": "internal", "isCompactSummary": true, "isMeta": true, "message": M{"content": text}}
+			}
+			decode := func(event M) M {
+				data, _ := json.Marshal(event)
+				var parsed M
+				if err := json.Unmarshal(data, &parsed); err != nil {
+					t.Fatal(err)
+				}
+				return parsed
+			}
+			public, internal = decode(public), decode(internal)
+			meta := M{"kind": kind, "busy": false}
+			if got := parseMessage(public, meta, 1); got == nil || got["content"] != text || yes(got["internal"]) {
+				t.Fatalf("public message changed: %v", got)
+			}
+			got := parseMessage(internal, meta, 1)
+			if got == nil || !yes(got["internal"]) || got["content"] != "" || yes(meta["busy"]) {
+				t.Fatalf("internal summary must be a text-free tombstone: %v", got)
+			}
+			events := []M{public, internal}
+			if kind == "codex" {
+				events = append([]M{{"type": "session_meta", "payload": M{"id": "summary-session", "cwd": shared}}}, events...)
+			}
+			writeRecords(t, filepath.Join(m.bases[kind], "summary.jsonl"), events)
+			batch := m.scan()
+			if len(batch) != 1 || len(arr(batch[0]["messages"])) != 2 {
+				t.Fatalf("missing classification: %v", batch)
+			}
+			messages := arr(batch[0]["messages"])
+			if str(obj(messages[0])["id"]) == str(obj(messages[1])["id"]) || !yes(obj(messages[1])["internal"]) {
+				t.Fatalf("distinct stable IDs required: %v", messages)
+			}
+		})
+	}
+}
 func TestStoppedRelayTurnReleasesBusyUntilNewNativeTurn(t *testing.T) {
 	m, shared, _ := fixtureMirror(t)
 	path := filepath.Join(m.bases["codex"], "session.jsonl")

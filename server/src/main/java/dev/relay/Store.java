@@ -165,8 +165,8 @@ final class Store {
          CASE WHEN job_at IS NOT NULL AND (native_at IS NULL OR job_at>=native_at) THEN job_preview ELSE COALESCE(native_preview,'') END preview
         FROM (
          SELECT a.*,d.name device_name,
-          (SELECT LEFT(content,140) FROM messages WHERE agent_id=a.id AND duplicate_of IS NULL ORDER BY created_at DESC,id DESC LIMIT 1) native_preview,
-          (SELECT created_at FROM messages WHERE agent_id=a.id AND duplicate_of IS NULL ORDER BY created_at DESC,id DESC LIMIT 1) native_at,
+          (SELECT LEFT(content,140) FROM messages WHERE agent_id=a.id AND duplicate_of IS NULL AND internal=0 ORDER BY created_at DESC,id DESC LIMIT 1) native_preview,
+          (SELECT created_at FROM messages WHERE agent_id=a.id AND duplicate_of IS NULL AND internal=0 ORDER BY created_at DESC,id DESC LIMIT 1) native_at,
           (SELECT LEFT(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.prompt')),140) FROM jobs WHERE agent_id=a.id ORDER BY created_at DESC,id DESC LIMIT 1) job_preview,
           (SELECT created_at FROM jobs WHERE agent_id=a.id ORDER BY created_at DESC,id DESC LIMIT 1) job_at,
           EXISTS(SELECT 1 FROM jobs WHERE agent_id=a.id AND status IN ('running','cancelling')) relay_busy
@@ -282,6 +282,11 @@ final class Store {
     Map<String,Object> conversation(String ref, String cursor) {
         var agent = agent(ref); var jobs = rows("SELECT * FROM jobs WHERE agent_id=? ORDER BY created_at,id",agent.get("id"));
         var messages = rows("SELECT * FROM messages WHERE agent_id=? AND duplicate_of IS NULL ORDER BY created_at,id",agent.get("id"));
+        var suppressed = new ArrayList<String>();
+        messages.removeIf(m -> {
+            if (!truth(m.get("internal"))) return false;
+            suppressed.add(text(m.get("id"))); return true;
+        });
         var relayMessages = new ArrayList<Map<String,Object>>();
         Map<Object,Map<String,Object>> payloads = new HashMap<>();
         List<Object> active = new ArrayList<>();
@@ -297,7 +302,6 @@ final class Store {
         }
         // Native sync and task streaming can arrive at different times. Overlapping
         // execution times alone do not prove that a native message is represented.
-        var suppressed = new ArrayList<String>();
         // A transcript uses the device clock; task timestamps use the server clock.
         // Pair at most one user echo with each started task so real repeats survive.
         Set<Object> userCopies = new HashSet<>();
@@ -406,7 +410,10 @@ final class Store {
             if (!Set.of("","outside_roots","cwd_missing","cli_missing").contains(reason)) throw new ApiException("会话状态无效");
             update("UPDATE agents SET external_busy=?,last_activity=?,cwd=?,controllable=?,control_reason=? WHERE id=?",truth(session.get("busy")) ? 1:0,updated,cwd,truth(control) ? 1:0,reason,agentId);
             for (Object entry : list(session.getOrDefault("messages",List.of()),200)) {
-                var m = object(entry); String id = required(m,"id",100), role = required(m,"role",20), content = required(m,"content",MAX_OUTPUT);
+                var m = object(entry); String id = required(m,"id",100), role = required(m,"role",20);
+                Object internal=m.getOrDefault("internal",false);
+                if (!(internal instanceof Boolean)) throw new ApiException("消息可见性格式无效");
+                String content = truth(internal) ? "" : required(m,"content",MAX_OUTPUT);
                 if (!Set.of("user","assistant").contains(role)) throw new ApiException("消息角色无效");
                 String messageId=hash(messageNamespace+":"+id);
                 if (namespaces.size()>1) {
@@ -419,7 +426,8 @@ final class Store {
                         for (var copy : copies) if (!copy.get("id").equals(messageId)) update("UPDATE messages SET duplicate_of=? WHERE id=?",messageId,copy.get("id"));
                     }
                 }
-                update("INSERT INTO messages(id,agent_id,role,content,created_at) VALUES(?,?,?,?,?) ON DUPLICATE KEY UPDATE content=VALUES(content),duplicate_of=NULL",messageId,agentId,role,content,number(m.getOrDefault("created_at",updated)));
+                // A replay from an older daemon cannot restore an internal item.
+                update("INSERT INTO messages(id,agent_id,role,content,created_at,internal) VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE content=IF(internal=1 OR VALUES(internal)=1,'',VALUES(content)),internal=GREATEST(internal,VALUES(internal)),duplicate_of=NULL",messageId,agentId,role,content,number(m.getOrDefault("created_at",updated)),truth(internal) ? 1 : 0);
             }
         }
     }

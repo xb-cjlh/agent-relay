@@ -321,6 +321,18 @@ func (m *Mirror) readChanges(path string, t *trackedFile, stat os.FileInfo) {
 }
 func parseMessage(event, meta M, fallback float64) M {
 	role, text := "", ""
+	// Compaction output can look exactly like a final assistant answer. Keep
+	// only its stable ID/classification so a prior sync can also be retracted.
+	if yes(obj(event["metadata"])["compaction_output"]) || yes(event["isCompactSummary"]) {
+		role = str(event["type"])
+		if meta["kind"] == "codex" {
+			role = str(obj(event["payload"])["role"])
+		}
+		if role == "user" || role == "assistant" {
+			return M{"role": role, "content": "", "internal": true, "created_at": timestamp(event["timestamp"], fallback)}
+		}
+		return nil
+	}
 	if meta["kind"] == "codex" {
 		p := obj(event["payload"])
 		if event["type"] == "event_msg" {

@@ -74,6 +74,16 @@ def main():
                         }''', {'job': job, 'content': native_prompt, 'id': echo_id})
                         page.evaluate('loadConversation()')
                         expect(page.locator('#messages .user')).to_have_count(1)
+                        # A pre-upgrade compaction summary can already be cached.
+                        summary = name + session['kind'] + ' internal context summary'
+                        summary_source = name + session['kind'] + '-summary'
+                        stamp = time.time()
+                        session.update(messages=[{'id': summary_source, 'role': 'assistant', 'content': summary, 'created_at': stamp}])
+                        device.request('POST', '/api/device/poll', {'sessions': [session]})
+                        expect(page.locator('#messages')).to_contain_text(summary, timeout=15000)
+                        session['messages'] = [{'id': summary_source, 'role': 'assistant', 'content': '', 'internal': True, 'created_at': stamp}]
+                        device.request('POST', '/api/device/poll', {'sessions': [session]})
+                        expect(page.locator('#messages')).not_to_contain_text(summary, timeout=15000)
                         queued = client.request('POST', '/api/jobs', {'kind': 'prompt', 'agent': agent['id'], 'prompt': 'queued next question'})
                         latest = 'native reply missing from task stream: ' + name + session['kind']
                         stamp = time.time()
