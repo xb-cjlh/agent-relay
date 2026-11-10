@@ -30,12 +30,13 @@ def main():
                             'kind': kind, 'cwd': str(root)})
                         prompt = 'relay question ' + name + kind
                         job = client.request('POST', '/api/jobs', {'kind': 'prompt', 'agent': agent['id'], 'prompt': prompt})
-                        device.request('POST', '/api/device/poll', {'capacity': 1})
+                        claimed = device.request('POST', '/api/device/poll', {'capacity': 1})['jobs']
+                        started = next(j['started_at'] for j in claimed if j['id'] == job['id'])
                         stamp = time.time()
                         session = {'kind': kind, 'session_id': name + '-' + kind, 'name': kind,
                                    'cwd': str(root), 'busy': True, 'updated_at': stamp,
                                    'messages': [
-                                       {'id': name + kind + '-user', 'role': 'user', 'content': prompt, 'created_at': stamp},
+                                       {'id': name + kind + '-user', 'role': 'user', 'content': prompt, 'created_at': started - 1.65},
                                        {'id': name + kind + '-echo', 'role': 'assistant', 'content': 'first streamed update', 'created_at': stamp}]}
                         device.request('POST', '/api/device/poll', {
                             'active': [{'id': job['id'], 'session_id': session['session_id'], 'output': 'first streamed update\n'}],
@@ -51,6 +52,7 @@ def main():
                     for agent, job, session in agents:
                         page.locator('[data-agent="' + agent['id'] + '"]').evaluate('(el)=>el.click()')
                         expect(page.locator('#messages')).to_contain_text('first streamed update')
+                        expect(page.locator('#messages .user')).to_have_count(1)
                         queued = client.request('POST', '/api/jobs', {'kind': 'prompt', 'agent': agent['id'], 'prompt': 'queued next question'})
                         latest = 'native reply missing from task stream: ' + name + session['kind']
                         stamp = time.time()

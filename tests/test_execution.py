@@ -103,3 +103,41 @@ class ExecutionCase(unittest.TestCase):
             completed = self.client.request('GET', path)
             self.assertIn('new native reply', [m['content'] for m in completed['messages']])
             self.client.request('POST', '/api/jobs/' + queued['id'] + '/cancel', {})
+
+    def test_user_echoes_allow_clock_skew_without_collapsing_repeated_questions(self):
+        _, device = self.register()
+        for kind in ['codex', 'claude']:
+            agent = self.create_agent(name=kind + '-clock-skew', kind=kind)
+            first = self.prompt(agent, 'same question')
+            device.request('POST', '/api/device/poll', {'capacity': 1})
+            self.server.database.execute('UPDATE jobs SET created_at=999.4,started_at=1000 WHERE id=?', (first['id'],))
+            session = {'kind': kind, 'session_id': kind + '-clock-session', 'name': kind,
+                       'cwd': str(self.root), 'busy': False, 'updated_at': 1005,
+                       'messages': [
+                           {'id': kind + '-old-question', 'role': 'user', 'content': 'same question', 'created_at': 960},
+                           {'id': kind + '-early-echo', 'role': 'user', 'content': 'same question', 'created_at': 999.2},
+                           {'id': kind + '-real-repeat', 'role': 'user', 'content': 'same question', 'created_at': 1005}]}
+            device.request('POST', '/api/device/poll', {'active': [{
+                'id': first['id'], 'session_id': session['session_id'], 'output': 'first answer'}], 'sessions': [session]})
+            path = '/api/agents/' + agent['id'] + '/messages'
+            reply = self.client.request('GET', path)
+            questions = [m for m in reply['messages'] if m['role'] == 'user']
+            self.assertEqual(len(questions), 3)  # Old local question, one Relay question, and a real local repeat.
+            self.assertEqual(sorted(m['created_at'] for m in questions), [960, 999.4, 1005])
+            self.assertEqual(len(reply['suppressed_message_ids']), 1)
+
+            second = self.prompt(agent, 'same question')
+            queued = self.client.request('GET', path)
+            self.assertEqual(len([m for m in queued['messages'] if m['role'] == 'user']), 4)
+            device.request('POST', '/api/device/jobs/' + first['id'] + '/complete', {'status': 'succeeded', 'output': 'first answer'})
+            device.request('POST', '/api/device/poll', {'capacity': 1})
+            self.server.database.execute('UPDATE jobs SET created_at=1099,started_at=1100 WHERE id=?', (second['id'],))
+            session.update(updated_at=1101, messages=[{
+                'id': kind + '-second-echo', 'role': 'user', 'content': 'same question', 'created_at': 1101.5}])
+            device.request('POST', '/api/device/poll', {'sessions': [session]})
+            repeated = self.client.request('GET', path)
+            questions = [m for m in repeated['messages'] if m['role'] == 'user']
+            self.assertEqual(len(questions), 4)
+            self.assertEqual({m['job_id'] for m in questions if m.get('job_id')}, {first['id'], second['id']})
+            self.assertEqual(len(repeated['suppressed_message_ids']), 2)
+            device.request('POST', '/api/device/jobs/' + second['id'] + '/complete', {'status': 'succeeded', 'output': 'second answer'})

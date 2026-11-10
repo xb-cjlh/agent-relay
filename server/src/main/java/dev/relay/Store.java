@@ -296,13 +296,28 @@ final class Store {
         // execution times alone do not prove that a native message is represented.
         var suppressed = new ArrayList<String>();
         double current = now();
+        // A transcript uses the device clock; task timestamps use the server clock.
+        // Pair at most one user echo with each started task so real repeats survive.
+        Set<Object> userCopies = new HashSet<>();
+        for (var j : jobs) {
+            if (j.get("started_at")==null) continue;
+            double start = number(j.get("started_at"));
+            double end = j.get("finished_at")==null ? current : number(j.get("finished_at"));
+            String prompt = prompts.get(j.get("id")).strip();
+            messages.stream().filter(m -> "user".equals(m.get("role")) && !userCopies.contains(m.get("id"))
+                && !prompt.isEmpty() && prompt.equals(text(m.get("content")).strip())
+                && number(m.get("created_at"))>=start-30 && number(m.get("created_at"))<=end+30)
+                .min(Comparator.<Map<String,Object>>comparingDouble(m -> Math.abs(number(m.get("created_at"))-start))
+                    .thenComparingDouble(m -> number(m.get("created_at"))).thenComparing(m -> text(m.get("id"))))
+                .ifPresent(m -> userCopies.add(m.get("id")));
+        }
         messages.removeIf(m -> {
             String content = text(m.get("content")).strip();
             double created = number(m.get("created_at"));
-            boolean copied = !content.isEmpty() && jobs.stream().anyMatch(j -> j.get("started_at") != null
+            boolean copied = "user".equals(m.get("role")) ? userCopies.contains(m.get("id"))
+                : !content.isEmpty() && jobs.stream().anyMatch(j -> j.get("started_at") != null
                 && number(j.get("started_at")) <= created && created <= (j.get("finished_at")==null ? current : number(j.get("finished_at")))
-                && ("user".equals(m.get("role")) ? prompts.get(j.get("id")).strip().equals(content)
-                    : ("\n"+text(j.get("output")).strip()+"\n").contains("\n"+content+"\n")));
+                && ("\n"+text(j.get("output")).strip()+"\n").contains("\n"+content+"\n"));
             if(copied)suppressed.add(text(m.get("id")));
             return copied;
         });
