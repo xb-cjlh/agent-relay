@@ -281,15 +281,32 @@ final class Store {
     Map<String,Object> conversation(String ref, String cursor) {
         var agent = agent(ref); var jobs = rows("SELECT * FROM jobs WHERE agent_id=? ORDER BY created_at,id",agent.get("id"));
         var messages = rows("SELECT * FROM messages WHERE agent_id=? AND duplicate_of IS NULL ORDER BY created_at,id",agent.get("id"));
-        messages.removeIf(m -> jobs.stream().anyMatch(j -> j.get("started_at") != null && number(j.get("started_at")) <= number(m.get("created_at")) && number(m.get("created_at")) <= (j.get("finished_at")==null ? now() : number(j.get("finished_at")))));
+        var relayMessages = new ArrayList<Map<String,Object>>();
+        Map<Object,String> prompts = new HashMap<>();
         List<Object> active = new ArrayList<>();
         for (var j : jobs) {
             String id = text(j.get("id")); double created = number(j.get("created_at"));
             var payload=object(decode(j.get("payload")));
-            messages.add(map("id",id+":user","role","user","content",payload.get("prompt"),"images",payload.getOrDefault("images",List.of()),"created_at",created,"job_id",id,"status",j.get("status"),"error",j.get("error")));
-            messages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"diagnostics",j.get("diagnostics"),"created_at",created+0.000001,"job_id",id,"status",j.get("status"),"error",j.get("error")));
+            prompts.put(id,text(payload.getOrDefault("prompt","")));
+            relayMessages.add(map("id",id+":user","role","user","content",payload.get("prompt"),"images",payload.getOrDefault("images",List.of()),"created_at",created,"job_id",id,"status",j.get("status"),"error",j.get("error")));
+            relayMessages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"diagnostics",j.get("diagnostics"),"created_at",created+0.000001,"job_id",id,"status",j.get("status"),"error",j.get("error")));
             if (!TERMINAL.contains(j.get("status"))) active.add(map("id",id,"status",j.get("status")));
         }
+        // Native sync and task streaming can arrive at different times. Overlapping
+        // execution times alone do not prove that a native message is represented.
+        var suppressed = new ArrayList<String>();
+        double current = now();
+        messages.removeIf(m -> {
+            String content = text(m.get("content")).strip();
+            double created = number(m.get("created_at"));
+            boolean copied = !content.isEmpty() && jobs.stream().anyMatch(j -> j.get("started_at") != null
+                && number(j.get("started_at")) <= created && created <= (j.get("finished_at")==null ? current : number(j.get("finished_at")))
+                && ("user".equals(m.get("role")) ? prompts.get(j.get("id")).strip().equals(content)
+                    : ("\n"+text(j.get("output")).strip()+"\n").contains("\n"+content+"\n")));
+            if(copied)suppressed.add(text(m.get("id")));
+            return copied;
+        });
+        messages.addAll(relayMessages);
         messages.sort(Comparator.<Map<String,Object>>comparingDouble(m -> number(m.get("created_at"))).thenComparing(m -> text(m.get("id"))));
         if (cursor!=null) {
             String[] parts = cursor.split("\\|",2); double before;
@@ -299,7 +316,7 @@ final class Store {
         }
         var approvals=rows("SELECT p.* FROM job_approvals p JOIN jobs j ON j.id=p.job_id WHERE j.agent_id=? AND p.decision='pending' AND j.status='running' ORDER BY p.created_at LIMIT 32",agent.get("id"));
         for(var approval:approvals)approval.put("details",decode(approval.get("details")));
-        return map("agent",agent,"messages",messages.subList(Math.max(0,messages.size()-100),messages.size()),"has_more",messages.size()>100,"active_jobs",active,"approvals",approvals);
+        return map("agent",agent,"messages",messages.subList(Math.max(0,messages.size()-100),messages.size()),"has_more",messages.size()>100,"active_jobs",active,"approvals",approvals,"suppressed_message_ids",suppressed);
     }
     void syncSessions(String deviceId, Object value) {
         for (Object item : list(value,100)) {

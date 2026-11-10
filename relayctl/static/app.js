@@ -302,6 +302,7 @@ async function loadConversation(before) {
   const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 100;
   const oldHeight = scroller.scrollHeight, oldTop = scroller.scrollTop;
   let changed = false;
+  for (const id of reply.suppressed_message_ids || []) messages.delete(id);
   for (const message of reply.messages) {
     if (JSON.stringify(messages.get(message.id)) !== JSON.stringify(message)) changed = true;
     messages.set(message.id, message);
