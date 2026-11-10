@@ -1,7 +1,11 @@
 package dev.relay;
 
 import java.nio.file.*;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.FileSystemResource;
@@ -10,7 +14,10 @@ import org.springframework.stereotype.Component;
 
 @Component
 final class PublicContent {
+    private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
+    static boolean cacheableAsset(String path) { return CACHEABLE_ASSETS.contains(path); }
     private final Path downloads;
+    private final Map<String,String> assetTags = new ConcurrentHashMap<>();
     PublicContent(@Value("${relay.downloads:./dist/downloads}") String downloads) {
         this.downloads=Path.of(downloads).toAbsolutePath().normalize();
     }
@@ -34,7 +41,20 @@ final class PublicContent {
         if (file!=null) {
             var resource=new ClassPathResource(file);
             String mime=file.endsWith(".html") ? "text/html;charset=UTF-8" : file.endsWith(".css") ? "text/css;charset=UTF-8" : file.endsWith(".js") ? "text/javascript;charset=UTF-8" : file.endsWith(".svg") ? "image/svg+xml" : "text/plain;charset=UTF-8";
-            return ResponseEntity.ok().contentType(MediaType.parseMediaType(mime)).contentLength(resource.contentLength()).body(head ? null : resource);
+            var response=ResponseEntity.ok().contentType(MediaType.parseMediaType(mime)).contentLength(resource.contentLength());
+            if (cacheableAsset(path)) {
+                String tag=assetTags.get(file);
+                if (tag==null) {
+                    try (var in=resource.getInputStream()) {
+                        tag="W/\""+HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(in.readAllBytes()))+"\"";
+                    }
+                    assetTags.put(file,tag);
+                }
+                // Cache public assets, but validate their content on each visit so
+                // unversioned URLs immediately pick up a deployed update.
+                response.cacheControl(CacheControl.noCache().cachePublic()).eTag(tag);
+            }
+            return response.body(head ? null : resource);
         }
         if (path.equals("/downloads/current.json") || path.matches("/downloads/[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}/(SHA256SUMS|relayctl-(darwin|linux)-(amd64|arm64))")) {
             Path target=downloads.resolve(path.substring("/downloads/".length())).normalize();

@@ -95,7 +95,7 @@ async function refresh() {
     }
     renderDeviceFilter(); renderSessions(); renderDevices(); renderFiles(); updateOptions();
     if (!scopedAgents().some(agent => agent.id === selected)) {
-      selectAgent(preferredAgent(),false);
+      selectAgent(preferredAgent(),false,false);
     }
     renderHeader();
     if (selected && !loadingOlder) await loadConversation();
@@ -175,7 +175,7 @@ function renderSessions() {
   if (list.dataset.rendered !== html) { list.innerHTML = html; list.dataset.rendered = html; }
 }
 
-function selectAgent(id,closeSidebar=true) {
+function selectAgent(id,closeSidebar=true,load=true) {
   if (selected) { drafts.set(selected, $('prompt').value); sessionStorage.setItem('relay-draft:' + selected, $('prompt').value); }
   selected = id; conversationRequest++; messages = new Map(); activeJobs = []; approvals = []; renderApprovals(); firstMessages = true;
   $('messages').replaceChildren(); $('new-messages').hidden = true; $('load-older').hidden = true;
@@ -185,7 +185,7 @@ function selectAgent(id,closeSidebar=true) {
   if (agent) sessionStorage.setItem('relay-selected-device:' + agent.device_id,id);
   $('thread').hidden = !id; $('empty-conversation').hidden = !!id;
   renderSessions(); renderHeader(); if (closeSidebar) toggleSidebar(false);
-  if (id) loadConversation().catch(error => toast(error.message));
+  if (id && load) loadConversation().catch(error => toast(error.message));
 }
 
 function renderHeader() {

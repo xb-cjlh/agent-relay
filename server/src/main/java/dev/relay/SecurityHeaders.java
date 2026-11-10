@@ -11,7 +11,8 @@ final class SecurityHeaders extends OncePerRequestFilter {
     private final String storageOrigin;
     SecurityHeaders(OssImages oss){storageOrigin=oss.connectOrigin();}
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
-        response.setHeader("Cache-Control","no-store");
+        if (!PublicContent.cacheableAsset(request.getRequestURI()) || !(request.getMethod().equals("GET") || request.getMethod().equals("HEAD")))
+            response.setHeader("Cache-Control","no-store");
         response.setHeader("X-Content-Type-Options","nosniff");
         response.setHeader("Referrer-Policy","no-referrer");
         String oss=storageOrigin.isEmpty()?"":" "+storageOrigin;

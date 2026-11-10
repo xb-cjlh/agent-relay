@@ -16,6 +16,7 @@ async function signedInAs(reply) {
   signedIn=true;currentUser=reply.user;generation++;
   $('auth-password').value='';$('auth-code').value='';
   showScreen('session-loading');
+  $('session-loading-message').textContent='正在同步设备和会话…';
   await refresh();
 }
 document.querySelectorAll('[data-auth-mode]').forEach(el=>el.addEventListener('click',()=>setAuthMode(el.dataset.authMode)));
@@ -71,7 +72,7 @@ async function checkSession(){
   if(checkingSession)return;
   checkingSession=true;
   showScreen('session-loading');
-  $('session-loading-message').textContent='正在加载…';$('retry-session').hidden=true;
+  $('session-loading-message').textContent='正在确认登录状态…';$('retry-session').hidden=true;
   try{
     const reply=await api('auth/session');
     if(reply.authenticated)await signedInAs(reply);

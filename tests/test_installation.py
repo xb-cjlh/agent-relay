@@ -1,5 +1,6 @@
 """Exercise the published installer with actual artifacts and the Java server."""
 import functools
+import gzip
 import hashlib
 import http.server
 import json
@@ -35,7 +36,7 @@ class InstallationCase(unittest.TestCase):
         for path in ['/docs/', '/docs/install.md', '/install-agent.md', '/install.sh', '/docs.js', '/docs.css', '/skills/agent-bridge/SKILL.md']:
             body, headers = self.request(path)
             self.assertTrue(body, path)
-            self.assertIn('no-store', headers['Cache-Control'])
+            self.assertIn('no-cache' if path.endswith(('.js','.css')) else 'no-store', headers['Cache-Control'])
             head, metadata = self.request(path, 'HEAD')
             self.assertEqual(head, b'')
             self.assertEqual(int(metadata['Content-Length']), len(body))
@@ -88,6 +89,44 @@ class InstallationCase(unittest.TestCase):
         empty=self.root/'empty-token'; empty.write_text('')
         install('--setup','--no-daemon','--token-file',str(empty),success=False)
         self.assertEqual(json.loads((self.root/'config/config.json').read_text())['token'],fixtures.TOKEN)
+
+    def test_compression_and_revalidated_public_assets_keep_account_data_uncached(self):
+        for path in ['/app.js', '/account.js', '/style.css', '/vendor/markdown-it.min.js', '/favicon.svg']:
+            content, headers = self.request(path)
+            self.assertIn('public', headers['Cache-Control'])
+            self.assertIn('no-cache', headers['Cache-Control'])
+            self.assertNotIn('no-store', headers['Cache-Control'])
+            request = urllib.request.Request(self.url + path, headers={'If-None-Match': headers['ETag']})
+            with self.assertRaises(urllib.error.HTTPError) as unchanged:
+                urllib.request.urlopen(request)
+            self.assertEqual(304, unchanged.exception.code)
+            self.assertEqual(b'', unchanged.exception.read())
+            changed = urllib.request.Request(self.url + path, headers={'If-None-Match': 'W/"previous-build"'})
+            with urllib.request.urlopen(changed) as response:
+                self.assertEqual(200, response.status)
+                self.assertEqual(content, response.read())
+
+        fixtures.ServerCase.register(self)
+        agent = fixtures.ServerCase.create_agent(self)
+        fixtures.ServerCase.prompt(self, agent, 'compression fixture ' * 1000)
+        for path, authenticated in [('/vendor/markdown-it.min.js', False), ('/api/state', True)]:
+            headers = {'Accept-Encoding': 'gzip'}
+            if authenticated:
+                headers['Authorization'] = 'Bearer ' + fixtures.TOKEN
+            with urllib.request.urlopen(urllib.request.Request(self.url + path, headers=headers)) as response:
+                data = response.read()
+                self.assertEqual('gzip', response.headers['Content-Encoding'])
+                self.assertIn('accept-encoding', response.headers['Vary'].lower())
+                decoded = gzip.decompress(data)
+                self.assertLess(len(data), len(decoded) / 2)
+                if authenticated:
+                    self.assertIn('no-store', response.headers['Cache-Control'])
+                    self.assertNotIn('ETag', response.headers)
+                    self.assertIn(agent['id'], decoded.decode())
+        for path in ['/', '/api/auth/session']:
+            _, headers = self.request(path)
+            self.assertIn('no-store', headers['Cache-Control'])
+            self.assertNotIn('ETag', headers)
 
     def test_corrupted_download_never_replaces_existing_cli(self):
         dist=self.root/'downloads'; release=dist/'broken'; release.mkdir(parents=True)
