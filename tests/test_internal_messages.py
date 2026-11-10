@@ -10,6 +10,39 @@ class InternalMessagesCase(unittest.TestCase):
     tearDown = fixtures.ServerCase.tearDown
     register = fixtures.ServerCase.register
 
+    def test_legacy_codex_runtime_context_is_hidden_without_hiding_real_messages(self):
+        identity, device = self.register()
+        agents = '# AGENTS.md instructions for /Users/fixture\n\n<INSTRUCTIONS>\nProject rules\n</INSTRUCTIONS>'
+        environment = '<environment_context>\n<cwd>/Users/fixture</cwd>\n</environment_context>'
+        context = agents + '\n' + environment
+        session = {'kind': 'codex', 'session_id': 'legacy-context', 'name': 'legacy-context',
+                   'cwd': str(self.root), 'updated_at': 1010, 'busy': False,
+                   'messages': [
+                       {'id': 'normal', 'role': 'user', 'content': 'upgrade relay', 'created_at': 1000},
+                       {'id': 'quoted', 'role': 'user', 'content': 'Explain this:\n' + context, 'created_at': 1001},
+                       {'id': 'explicit-user', 'role': 'user', 'content': context, 'internal': False, 'created_at': 1002},
+                       {'id': 'assistant-example', 'role': 'assistant', 'content': context, 'created_at': 1003},
+                       {'id': 'mixed-user', 'role': 'user', 'content': context + '\nPlease review it', 'created_at': 1004},
+                       {'id': 'incomplete', 'role': 'user', 'content': '# AGENTS.md instructions for /tmp\n<INSTRUCTIONS>text', 'created_at': 1005},
+                       {'id': 'runtime', 'role': 'user', 'content': context, 'created_at': 1006},
+                       {'id': 'environment', 'role': 'user', 'content': environment, 'created_at': 1007}]}
+        device.request('POST', '/api/device/poll', {'sessions': [session]})
+        state = self.client.request('GET', '/api/state?view=web')
+        agent = state['agents'][0]
+        self.assertEqual(agent['preview'], session['messages'][5]['content'][:140])
+        path = '/api/agents/' + agent['id'] + '/messages'
+        reply = self.client.request('GET', path)
+        self.assertEqual(len(reply['messages']), 6)
+        suppressed = {hashlib.sha256((identity['id'] + ':' + source).encode()).hexdigest() for source in ['runtime', 'environment']}
+        self.assertEqual(set(reply['suppressed_message_ids']), suppressed)
+        self.assertTrue(any(m['role'] == 'assistant' and m['content'] == context for m in reply['messages']))
+        self.assertTrue(any(m['role'] == 'user' and m['content'] == context for m in reply['messages']))
+        # The same structure in Claude is not automatically a Codex context item.
+        session.update(kind='claude', session_id='claude-context', name='claude-example', messages=[{**session['messages'][6], 'id': 'claude-runtime'}])
+        device.request('POST', '/api/device/poll', {'sessions': [session]})
+        agent = next(a for a in self.client.request('GET', '/api/state')['agents'] if a['kind'] == 'claude')
+        self.assertEqual(self.client.request('GET', '/api/agents/' + agent['id'] + '/messages')['messages'][0]['content'], context)
+
     def test_internal_classification_retracts_history_cache_and_preview(self):
         identity, device = self.register()
         for kind in ['codex', 'claude']:

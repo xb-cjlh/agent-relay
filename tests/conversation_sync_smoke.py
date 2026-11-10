@@ -84,6 +84,12 @@ def main():
                         session['messages'] = [{'id': summary_source, 'role': 'assistant', 'content': '', 'internal': True, 'created_at': stamp}]
                         device.request('POST', '/api/device/poll', {'sessions': [session]})
                         expect(page.locator('#messages')).not_to_contain_text(summary, timeout=15000)
+                        if session['kind'] == 'codex':
+                            runtime = '# AGENTS.md instructions for /fixture\n\n<INSTRUCTIONS>\nruntime-only-project-rules\n</INSTRUCTIONS>\n<environment_context>\n<cwd>/fixture</cwd>\n</environment_context>'
+                            session['messages'] = [{'id': name + '-runtime', 'role': 'user', 'content': runtime, 'created_at': time.time()}]
+                            device.request('POST', '/api/device/poll', {'sessions': [session]})
+                            page.evaluate('loadConversation()')
+                            expect(page.locator('#messages')).not_to_contain_text('runtime-only-project-rules')
                         queued = client.request('POST', '/api/jobs', {'kind': 'prompt', 'agent': agent['id'], 'prompt': 'queued next question'})
                         latest = 'native reply missing from task stream: ' + name + session['kind']
                         stamp = time.time()

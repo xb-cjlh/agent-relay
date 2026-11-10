@@ -77,6 +77,34 @@ final class Values {
         return s;
     }
 
+    // Fallback for old devices that did not transmit an explicit classification.
+    static boolean codexContextText(String value) {
+        String text = value.strip();
+        if (text.isEmpty()) return false;
+        while (!text.isEmpty()) {
+            if (text.startsWith("# AGENTS.md instructions")) {
+                int line = text.indexOf('\n');
+                if (line<0) return false;
+                String header = text.substring(0,line);
+                if (!header.equals("# AGENTS.md instructions") && !header.startsWith("# AGENTS.md instructions for ")) return false;
+                text = text.substring(line+1).strip();
+                int end = text.indexOf("</INSTRUCTIONS>");
+                if (!text.startsWith("<INSTRUCTIONS>") || end<0) return false;
+                text = text.substring(end+"</INSTRUCTIONS>".length()).strip(); continue;
+            }
+            boolean matched = false;
+            for (String tag : List.of("environment_context","user_instructions","permissions instructions")) {
+                if (!text.startsWith("<"+tag+">")) continue;
+                String closing = "</"+tag+">";
+                int end = text.indexOf(closing);
+                if (end<0) return false;
+                text = text.substring(end+closing.length()).strip(); matched = true; break;
+            }
+            if (!matched) return false;
+        }
+        return true;
+    }
+
     static String tail(String value, int limit) { int size = value.codePointCount(0,value.length()); return value.substring(value.offsetByCodePoints(0,Math.max(0,size-limit))); }
     static String head(String value, int limit) { return value.substring(0,value.offsetByCodePoints(0,Math.min(value.codePointCount(0,value.length()),limit))); }
     static String id(String prefix) { return prefix + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 20); }

@@ -68,6 +68,69 @@ func timestamp(v interface{}, fallback float64) float64 {
 	}
 	return float64(t.UnixNano()) / 1e9
 }
+
+// Legacy transcripts have no content-kind metadata. Recognize only complete
+// runtime fragments; quoted instructions and messages with extra text survive.
+func codexContextText(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	for text != "" {
+		if strings.HasPrefix(text, "# AGENTS.md instructions") {
+			header, rest, ok := strings.Cut(text, "\n")
+			if !ok || (header != "# AGENTS.md instructions" && !strings.HasPrefix(header, "# AGENTS.md instructions for ")) {
+				return false
+			}
+			text = strings.TrimSpace(rest)
+			if !strings.HasPrefix(text, "<INSTRUCTIONS>") {
+				return false
+			}
+			end := strings.Index(text, "</INSTRUCTIONS>")
+			if end < 0 {
+				return false
+			}
+			text = strings.TrimSpace(text[end+len("</INSTRUCTIONS>"):])
+			continue
+		}
+		matched := false
+		for _, tag := range []string{"environment_context", "user_instructions", "permissions instructions"} {
+			if !strings.HasPrefix(text, "<"+tag+">") {
+				continue
+			}
+			closing := "</" + tag + ">"
+			end := strings.Index(text, closing)
+			if end < 0 {
+				return false
+			}
+			text = strings.TrimSpace(text[end+len(closing):])
+			matched = true
+			break
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+func codexUserContent(payload M) (string, bool) {
+	kinds := arr(obj(payload["internal_chat_message_metadata_passthrough"])["content_item_kinds"])
+	content := arr(payload["content"])
+	if len(kinds) > 0 && len(kinds) == len(content) {
+		visible := []interface{}{}
+		for i, kind := range kinds {
+			switch str(kind) {
+			case "agents_md.instructions", "environments.environment_context", "compaction.summary":
+			default:
+				visible = append(visible, content[i])
+			}
+		}
+		return messageText(visible), len(visible) == 0
+	}
+	text := messageText(payload["content"])
+	return text, codexContextText(text)
+}
 func (m *Mirror) metadata(path, kind string) M {
 	f, e := os.Open(path)
 	if e != nil {
@@ -350,11 +413,10 @@ func parseMessage(event, meta M, fallback float64) M {
 				return nil
 			}
 			if role == "user" {
-				s := strings.TrimSpace(text)
-				for _, prefix := range []string{"<environment_context>", "<user_instructions>", "<permissions instructions>"} {
-					if strings.HasPrefix(s, prefix) {
-						return nil
-					}
+				var internal bool
+				text, internal = codexUserContent(p)
+				if internal {
+					return M{"role": role, "content": "", "internal": true, "created_at": timestamp(event["timestamp"], fallback)}
 				}
 			}
 		}
@@ -383,7 +445,7 @@ func parseMessage(event, meta M, fallback float64) M {
 	if (role != "user" && role != "assistant") || strings.TrimSpace(text) == "" {
 		return nil
 	}
-	return M{"role": role, "content": tail(text, MaxOutput), "created_at": timestamp(event["timestamp"], fallback)}
+	return M{"role": role, "content": tail(text, MaxOutput), "internal": false, "created_at": timestamp(event["timestamp"], fallback)}
 }
 func (m *Mirror) acknowledge() { m.pending = map[string]M{} }
 func (m *Mirror) release(kind, sid string) {

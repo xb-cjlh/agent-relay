@@ -415,6 +415,9 @@ final class Store {
                 if (!(internal instanceof Boolean)) throw new ApiException("消息可见性格式无效");
                 String content = truth(internal) ? "" : required(m,"content",MAX_OUTPUT);
                 if (!Set.of("user","assistant").contains(role)) throw new ApiException("消息角色无效");
+                if (!m.containsKey("internal") && kind.equals("codex") && role.equals("user") && codexContextText(content)) {
+                    internal = true; content = "";
+                }
                 String messageId=hash(messageNamespace+":"+id);
                 if (namespaces.size()>1) {
                     List<Object> args=new ArrayList<>(); args.add(agentId);

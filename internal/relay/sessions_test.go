@@ -202,6 +202,70 @@ func TestMirrorMarksCompactionSummariesWithoutUploadingTheirText(t *testing.T) {
 		})
 	}
 }
+func TestCodexContextMessagesAreInternalButRealUserTextSurvives(t *testing.T) {
+	agents := "# AGENTS.md instructions for /Users/fixture\n\n<INSTRUCTIONS>\nProject rules\n</INSTRUCTIONS>"
+	environment := "<environment_context>\n<cwd>/Users/fixture</cwd>\n</environment_context>"
+	for _, test := range []struct {
+		name, text string
+		kinds      []string
+		internal   bool
+	}{
+		{"metadata", "runtime context without text markers", []string{"agents_md.instructions"}, true},
+		{"legacy_agents", agents, nil, true},
+		{"legacy_combined", agents + "\n" + environment, nil, true},
+		{"legacy_environment", environment, nil, true},
+		{"quoted", "Explain this:\n" + agents, nil, false},
+		{"code", "```text\n" + agents + "\n```", nil, false},
+		{"extra_user_text", agents + "\nPlease review this.", nil, false},
+		{"incomplete", "# AGENTS.md instructions for /tmp\n<INSTRUCTIONS>\ntext", nil, false},
+		{"explicit_user", agents, []string{"user.text"}, false},
+		{"explicit_unknown", agents, []string{"unknown"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			payload := M{"type": "message", "role": "user", "content": []M{{"type": "input_text", "text": test.text}}}
+			if test.kinds != nil {
+				payload["internal_chat_message_metadata_passthrough"] = M{"content_item_kinds": test.kinds}
+			}
+			event := M{"type": "response_item", "payload": payload}
+			data, _ := json.Marshal(event)
+			var parsed M
+			json.Unmarshal(data, &parsed)
+			got := parseMessage(parsed, M{"kind": "codex"}, 1)
+			if got == nil || yes(got["internal"]) != test.internal {
+				t.Fatalf("classification: %v", got)
+			}
+			want := test.text
+			if test.internal {
+				want = ""
+			}
+			if got["content"] != want {
+				t.Fatal("wrong visible content")
+			}
+		})
+	}
+}
+func TestCodexMixedContextKeepsOnlyTheRealUserPart(t *testing.T) {
+	for _, mixed := range []bool{false, true} {
+		content := []M{{"type": "input_text", "text": "private project rules"}, {"type": "input_text", "text": "private environment"}}
+		kinds := []string{"agents_md.instructions", "environments.environment_context"}
+		if mixed {
+			content = append(content, M{"type": "input_text", "text": "actual question"})
+			kinds = append(kinds, "user.text")
+		}
+		event := M{"type": "response_item", "payload": M{"type": "message", "role": "user", "content": content, "internal_chat_message_metadata_passthrough": M{"content_item_kinds": kinds}}}
+		data, _ := json.Marshal(event)
+		var parsed M
+		json.Unmarshal(data, &parsed)
+		got := parseMessage(parsed, M{"kind": "codex"}, 1)
+		want := ""
+		if mixed {
+			want = "actual question"
+		}
+		if got == nil || got["content"] != want || yes(got["internal"]) == mixed {
+			t.Fatalf("mixed=%v: %v", mixed, got)
+		}
+	}
+}
 func TestStoppedRelayTurnReleasesBusyUntilNewNativeTurn(t *testing.T) {
 	m, shared, _ := fixtureMirror(t)
 	path := filepath.Join(m.bases["codex"], "session.jsonl")
