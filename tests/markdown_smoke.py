@@ -137,6 +137,10 @@ def main():
                     final = partial + '\n```\n\n| 完成 | 结果 |\n| --- | --- |\n| 是 | 正常 |'
                     device.request('POST', '/api/device/jobs/' + job['id'] + '/complete', {'status': 'succeeded', 'output': final})
                     expect(live.locator('table')).to_have_count(1, timeout=15000)
+                    # Drain background polling before navigating; WebKit reports
+                    # requests cancelled by reload as access-control console errors.
+                    page.evaluate("Object.defineProperty(document, 'hidden', {get: () => true})")
+                    page.wait_for_load_state('networkidle')
                     page.reload()
                     expect(page.locator('#messages .assistant .message-body').last.locator('table td')).to_have_text(['是', '正常'])
                     assert not errors, errors
