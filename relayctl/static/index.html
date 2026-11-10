@@ -24,8 +24,8 @@
 <div class="sidebar-heading"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28">Relay</a><button id="close-sidebar" class="icon-button mobile-only" aria-label="关闭会话列表"><span data-icon="close"></span></button></div>
 <button id="new-agent" class="new-session"><span data-icon="plus"></span>新会话</button>
 <div class="device-switch"><label for="device-filter">切换设备</label><select id="device-filter"><option value="">全部设备</option></select></div>
-<label class="search"><span data-icon="search"></span><input id="search" type="search" placeholder="搜索会话" aria-label="搜索会话"></label>
-<div id="session-list" class="session-list" aria-label="会话列表"></div>
+<label class="search"><span data-icon="search"></span><input id="search" type="search" placeholder="搜索会话" aria-label="搜索会话" maxlength="200"></label>
+<div id="session-list" class="session-list" aria-label="会话列表"><div id="session-items"></div><button id="load-more-sessions" class="load-more-sessions" type="button" hidden>加载更多</button></div>
 <div class="sidebar-footer">
 <button id="devices-button"><span data-icon="monitor"></span>设备<span id="device-count"></span></button>
 <button id="account-button"><span data-icon="key"></span>账号与 SK</button>

@@ -45,16 +45,19 @@ final class ApiController {
             else if (identity==null) throw new ApiException(403,"此接口需要账号 SK 或网页登录");
             store.owner(identity!=null?identity.userId():text(devices.get(0).get("owner_user_id")));
             store.reconcile();
-            var result=route(method,path,request.getParameter("before"),deviceId,body);
+            var result=route(method,path,request,deviceId,body);
             transaction.commit();
             return result;
           } finally {store.clearOwner();}
         }
     }
 
-    ResponseEntity<?> route(String method,String path,String cursor,String deviceId,Map<String,Object> body) throws Exception {
+    ResponseEntity<?> route(String method,String path,HttpServletRequest request,String deviceId,Map<String,Object> body) throws Exception {
         Object result;
-        if (method.equals("GET") && path.equals("/api/state")) result=store.snapshot();
+        String cursor=request.getParameter("before");
+        if (method.equals("GET") && path.equals("/api/state")) result="web".equals(request.getParameter("view"))
+            ? store.snapshot(true,request.getParameter("device"),request.getParameter("q"),request.getParameter("through"),request.getParameter("selected")) : store.snapshot();
+        else if (method.equals("GET") && path.equals("/api/agents")) result=store.sessions(request.getParameter("device"),request.getParameter("q"),cursor);
         else if (method.equals("POST") && path.equals("/api/register")) result=store.register(body);
         else if (method.equals("POST") && path.equals("/api/devices/merge")) result=store.mergeDevices(body);
         else if (method.equals("POST") && path.equals("/api/agents")) result=store.createAgent(body);

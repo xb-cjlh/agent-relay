@@ -68,6 +68,8 @@ jobs:
           python -m pip install -r tests/requirements.txt
           python -m playwright install --with-deps chromium webkit
           python tests/auth_loading_smoke.py
+          python tests/session_list_smoke.py
+          python tests/session_pagination_smoke.py
           python tests/account_images_smoke.py
           python tests/permissions_smoke.py
           python tests/markdown_smoke.py

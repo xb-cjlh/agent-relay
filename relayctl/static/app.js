@@ -34,6 +34,9 @@ let approvals = [];
 let refreshing = false, generation = 0, conversationRequest = 0;
 let firstMessages = true, sending = false, connected = true, loadingOlder = false;
 let toastTimer;
+let sessionRows = [], sessionCursor = null, sessionThrough = null, sessionHasMore = false;
+let sessionLoading = true, sessionMoreLoading = false, sessionError = false, sessionRevision = 0;
+let refreshRequest = 0, refreshPromise = null, searchTimer;
 const drafts = new Map();
 
 function showScreen(id) {
@@ -67,6 +70,7 @@ async function logout(localOnly=false) {
   signedIn = false; currentUser = null; generation++; conversationRequest++;
   for (const upload of imageUploads) upload.abort();
   for (const key of Object.keys(sessionStorage)) if (key.startsWith('relay-')) sessionStorage.removeItem(key);
+  sessionRevision++; refreshRequest++; refreshing = false; sessionRows = []; sessionThrough = sessionCursor = null; sessionHasMore = false; sessionLoading = true; sessionMoreLoading = false; sessionError = false;
   selected = ''; deviceFilter = ''; drafts.clear(); imageDrafts.clear(); imageUrls.clear(); messages.clear(); activeJobs=[]; approvals=[]; renderApprovals(); state={devices:[],agents:[],jobs:[],artifacts:[]};
   showScreen('login');
   $('new-key-secret').textContent = ''; $('new-key').hidden = true;
@@ -81,30 +85,90 @@ function setConnected(value) {
   $('connection-label').textContent = value ? '已连接' : '连接中断，正在重试';
 }
 
-async function refresh() {
-  if (!signedIn || refreshing) return;
+function sessionParameters() {
+  const params = new URLSearchParams();
+  if (deviceFilter) params.set('device',deviceFilter);
+  const query = $('search').value.trim();
+  if (query) params.set('q',query);
+  return params;
+}
+
+function refresh() {
+  if (!signedIn || sessionMoreLoading) return Promise.resolve();
+  if (refreshing) return refreshPromise;
   refreshing = true;
-  const current = generation;
+  const current = generation, revision = sessionRevision, request = ++refreshRequest;
+  const params = sessionParameters(); params.set('view','web');
+  if (sessionThrough) params.set('through',sessionThrough);
+  const remembered = (deviceFilter && sessionStorage.getItem('relay-selected-device:' + deviceFilter)) || selected;
+  if (remembered) params.set('selected',remembered);
+  refreshPromise = (async () => {
+    try {
+      const next = await api('state?' + params);
+      if (current !== generation || revision !== sessionRevision || request !== refreshRequest) return;
+      sessionRows = next.agents;
+      sessionCursor = next.next_cursor; sessionHasMore = !!next.has_more;
+      sessionLoading = false; sessionError = false;
+      state = next;
+      if (next.selected_agent && !state.agents.some(agent => agent.id === next.selected_agent.id)) state.agents = [...state.agents,next.selected_agent];
+      setConnected(true); showScreen('workspace');
+      if (deviceFilter && !state.devices.some(device => device.id === deviceFilter)) {
+        deviceFilter = ''; sessionStorage.removeItem('relay-device-filter'); resetSessions(); return;
+      }
+      renderDeviceFilter(); renderSessions(); renderDevices(); renderFiles(); updateOptions();
+      if (!scopedAgents().some(agent => agent.id === selected)) selectAgent(preferredAgent(),false,false);
+      renderHeader();
+      if (selected && !loadingOlder) await loadConversation();
+    } catch (error) {
+      if (current !== generation || revision !== sessionRevision || request !== refreshRequest) return;
+      sessionLoading = false; sessionError = true; renderSessions(); setConnected(false);
+      if (!$('login').hidden) $('auth-error').textContent = error.message;
+      if (!$('session-loading').hidden) loadingError();
+      renderHeader();
+    } finally { if (request === refreshRequest) refreshing = false; }
+  })();
+  return refreshPromise;
+}
+
+function resetSessions() {
+  sessionRevision++; refreshRequest++; refreshing = false;
+  sessionRows = []; sessionCursor = sessionThrough = null; sessionHasMore = false;
+  sessionLoading = true; sessionMoreLoading = false; sessionError = false;
+  $('session-list').scrollTop = 0; renderSessions();
+  refresh();
+}
+
+async function loadMoreSessions() {
+  if (!signedIn || sessionLoading || sessionMoreLoading || (!sessionHasMore && !sessionError)) return;
+  if (!sessionCursor) { sessionError = false; refresh(); return; }
+  const current = generation, revision = sessionRevision;
+  sessionMoreLoading = true; sessionError = false; renderSessionPager();
   try {
-    const next = await api('state');
-    if (current !== generation) return;
-    state = next; setConnected(true);
-    showScreen('workspace');
-    if (deviceFilter && !state.devices.some(device => device.id === deviceFilter)) {
-      deviceFilter = ''; sessionStorage.removeItem('relay-device-filter');
-    }
-    renderDeviceFilter(); renderSessions(); renderDevices(); renderFiles(); updateOptions();
-    if (!scopedAgents().some(agent => agent.id === selected)) {
-      selectAgent(preferredAgent(),false,false);
-    }
-    renderHeader();
-    if (selected && !loadingOlder) await loadConversation();
+    if (refreshing) await refreshPromise;
+    if (current !== generation || revision !== sessionRevision || !sessionCursor) return;
+    const params = sessionParameters(); params.set('before',sessionCursor);
+    const reply = await api('agents?' + params);
+    if (current !== generation || revision !== sessionRevision) return;
+    sessionRows = [...new Map([...sessionRows,...reply.agents].map(agent => [agent.id,agent])).values()].sort(newestFirst);
+    const active = state.agents.find(agent => agent.id === selected);
+    state.agents = [...sessionRows];
+    if (active && !state.agents.some(agent => agent.id === active.id)) state.agents.push(active);
+    sessionCursor = reply.next_cursor; sessionHasMore = !!reply.has_more;
+    const last = sessionRows[sessionRows.length - 1];
+    if (last) sessionThrough = activityTime(last) + '|' + last.id;
+    renderSessions();
   } catch (error) {
-    setConnected(false);
-    if (!$('login').hidden) $('auth-error').textContent = error.message;
-    if (!$('session-loading').hidden) loadingError();
-    renderHeader();
-  } finally { refreshing = false; }
+    if (current === generation && revision === sessionRevision) { sessionError = true; toast(error.message); }
+  } finally {
+    if (current === generation && revision === sessionRevision) { sessionMoreLoading = false; renderSessionPager(); }
+  }
+}
+
+function renderSessionPager() {
+  const button = $('load-more-sessions');
+  button.hidden = sessionLoading || (!sessionHasMore && !sessionError);
+  button.disabled = sessionMoreLoading;
+  button.textContent = sessionMoreLoading ? '正在加载…' : sessionError ? '加载失败，点击重试' : '加载更多';
 }
 
 function scopedAgents() { return state.agents.filter(agent => !deviceFilter || agent.device_id === deviceFilter); }
@@ -120,8 +184,8 @@ function preferredAgent() {
 
 function renderDeviceFilter() {
   const select = $('device-filter');
-  const html = `<option value="">全部设备 · ${state.agents.length} 个会话</option>` + state.devices.map(device =>
-    `<option value="${esc(device.id)}">${esc(device.name)} · ${state.agents.filter(agent => agent.device_id === device.id).length} 个会话 · ${device.online ? '在线' : '离线'}</option>`).join('');
+  const html = `<option value="">全部设备 · ${state.devices.reduce((sum,device) => sum + Number(device.session_count || 0),0)} 个会话</option>` + state.devices.map(device =>
+    `<option value="${esc(device.id)}">${esc(device.name)} · ${device.session_count || 0} 个会话 · ${device.online ? '在线' : '离线'}</option>`).join('');
   if (select.dataset.rendered !== html) { select.innerHTML = html; select.dataset.rendered = html; }
   select.value = deviceFilter;
 }
@@ -129,12 +193,10 @@ function renderDeviceFilter() {
 function setDeviceFilter(id) {
   deviceFilter = state.devices.some(device => device.id === id) ? id : '';
   sessionStorage.setItem('relay-device-filter',deviceFilter);
-  $('search').value = '';
+  clearTimeout(searchTimer); $('search').value = '';
   renderDeviceFilter();
-  const next = preferredAgent();
-  if (next !== selected) selectAgent(next,false);
-  else { renderSessions(); renderHeader(); }
-  $('session-list').scrollTop = 0;
+  if (deviceFilter && state.agents.find(agent => agent.id === selected)?.device_id !== deviceFilter) selectAgent('',false,false);
+  resetSessions();
 }
 
 function sessionName(agent) {
@@ -162,7 +224,7 @@ function renderSessions() {
   const query = $('search').value.trim().toLowerCase(), now = new Date();
   const devices = new Map(state.devices.map(device => [device.id,device]));
   const groups = new Map();
-  for (const agent of scopedAgents().filter(agent => [agent.name,agent.cwd,agent.kind,kindName(agent.kind),devices.get(agent.device_id)?.name,agent.preview].join(' ').toLowerCase().includes(query)).sort(newestFirst)) {
+  for (const agent of [...sessionRows].sort(newestFirst)) {
     const device = devices.get(agent.device_id);
     if (!device) continue;
     const group = activityGroup(activityTime(agent),now);
@@ -170,9 +232,10 @@ function renderSessions() {
     groups.get(group).push(sessionItem(agent,device,now));
   }
   const sections = [...groups].map(([label,items]) => `<section class="session-group" aria-label="${label}"><h2 class="session-group-heading">${label}</h2>${items.join('')}</section>`).join('');
-  const list = $('session-list');
-  const html = sections || `<p class="sidebar-empty">${query ? '没有匹配的会话。' : deviceFilter ? '这台设备还没有同步到会话，可先在设备上使用 Codex / Claude Code，或新建会话。' : '还没有会话。连接设备后，会自动发现当前用户各目录下的已有会话。'}</p>`;
+  const list = $('session-items');
+  const html = sections || (sessionLoading ? '<p class="sidebar-empty" role="status">正在加载会话…</p>' : sessionError ? '' : `<p class="sidebar-empty">${query ? '没有匹配的会话。' : deviceFilter ? '这台设备还没有同步到会话，可先在设备上使用 Codex / Claude Code，或新建会话。' : '还没有会话。连接设备后，会自动发现当前用户各目录下的已有会话。'}</p>`);
   if (list.dataset.rendered !== html) { list.innerHTML = html; list.dataset.rendered = html; }
+  renderSessionPager();
 }
 
 function selectAgent(id,closeSidebar=true,load=true) {
@@ -219,7 +282,7 @@ function renderHeader() {
   mode.title = !permissionCapable ? '请升级目标设备 Relay 至 0.6.0 并重启后台进程' : !device?.capabilities.writable ? '请先在目标设备启用 --allow-agent-writes' : '执行权限从下一条消息生效';
   $('permission-note').hidden = mode.hidden || mode.value === 'device';
   $('permission-note').textContent = mode.value === 'full' ? '完全访问：允许以设备用户权限访问文件和网络，不再逐项审批。仅对随后发送的消息生效。' : (agent?.kind === 'claude' ? '按需审批：遵循 Claude 本机权限规则，需要确认的工具调用会显示在此处。' : '按需审批：项目内操作可直接执行，需要额外权限时在此确认。');
-  $('prompt').disabled = !!readOnly;
+  $('prompt').disabled = !agent || !!readOnly;
   $('send-button').disabled = sending || uploadingImages > 0 || !agent || readOnly || upgradeRequired || (!$('prompt').value.trim() && !(imageDrafts.get(selected)?.length));
   $('attach-image').disabled = sending || uploadingImages > 0 || !agent || readOnly || !device?.capabilities.image_input;
   $('attach-image').title = device?.capabilities.image_input ? '添加图片' : '请升级目标设备 Relay 至 0.5.0 并重启，以发送图片';
@@ -371,7 +434,7 @@ function updateOptions() { options('agent-device',state.devices); options('file-
 
 function renderDevices() {
   $('device-count').textContent = state.devices.length;
-  $('device-list').innerHTML = state.devices.map(d => `<div class="device-entry"><div class="device-entry-heading"><span class="dot ${d.online ? 'online' : 'offline'}"></span>${esc(d.name)}<small>${d.online ? '在线' : '离线'} · ${d.capabilities.discovery_scope === 'user' ? '整机发现' : '目录发现'}</small></div><p class="device-roots">${d.capabilities.access_scope === 'user' ? '可访问当前系统用户可用的所有目录' : '请升级设备端 CLI'}</p><div class="device-entry-actions"><span>${state.agents.filter(a => a.device_id === d.id).length} 个会话</span><button class="button secondary" data-view-device="${esc(d.id)}">查看会话</button></div></div>`).join('') || '<p class="sidebar-empty">还没有连接设备。</p>';
+  $('device-list').innerHTML = state.devices.map(d => `<div class="device-entry"><div class="device-entry-heading"><span class="dot ${d.online ? 'online' : 'offline'}"></span>${esc(d.name)}<small>${d.online ? '在线' : '离线'} · ${d.capabilities.discovery_scope === 'user' ? '整机发现' : '目录发现'}</small></div><p class="device-roots">${d.capabilities.access_scope === 'user' ? '可访问当前系统用户可用的所有目录' : '请升级设备端 CLI'}</p><div class="device-entry-actions"><span>${d.session_count || 0} 个会话</span><button class="button secondary" data-view-device="${esc(d.id)}">查看会话</button></div></div>`).join('') || '<p class="sidebar-empty">还没有连接设备。</p>';
 }
 
 function renderFiles() {
@@ -408,7 +471,20 @@ async function submit(form, action) {
 }
 
 $('logout').addEventListener('click',() => logout());
-$('search').addEventListener('input',renderSessions);
+$('search').addEventListener('input',() => {
+  clearTimeout(searchTimer);
+  // Invalidate pending responses immediately, before the debounce expires.
+  sessionRevision++; refreshRequest++; refreshing = false;
+  sessionRows = []; sessionCursor = sessionThrough = null; sessionHasMore = false;
+  sessionLoading = true; sessionMoreLoading = false; sessionError = false;
+  renderSessions();
+  searchTimer = setTimeout(resetSessions,200);
+});
+$('load-more-sessions').addEventListener('click',loadMoreSessions);
+$('session-list').addEventListener('scroll',() => {
+  const pane = $('session-list');
+  if (pane.scrollTop > 0 && pane.scrollHeight - pane.scrollTop - pane.clientHeight < 120 && !sessionError) loadMoreSessions();
+});
 $('device-filter').addEventListener('change',e => setDeviceFilter(e.target.value));
 $('new-agent').addEventListener('click',newSession); $('empty-new-agent').addEventListener('click',newSession);
 $('devices-button').addEventListener('click',() => { toggleSidebar(false); $('devices-dialog').showModal(); });
@@ -421,7 +497,8 @@ $('agent-form').addEventListener('submit',e => {
     const name = `${kind} · ${cwd.replace(/\/$/,'').split('/').pop().slice(0,35)} · ${Date.now().toString(36)}`;
     const agent = await api('agents',{device:$('agent-device').value,kind,name,cwd});
     const device = state.devices.find(d => d.id === agent.device_id);
-    state.agents.push({...agent,device_name:device.name,last_activity:agent.created_at});
+    const created = {...agent,device_name:device.name,last_activity:agent.created_at};
+    state.agents.push(created); sessionRows.unshift(created);
     $('agent-dialog').close();
     if (deviceFilter && deviceFilter !== agent.device_id) setDeviceFilter(agent.device_id);
     renderDeviceFilter(); selectAgent(agent.id); $('prompt').focus(); await refresh();

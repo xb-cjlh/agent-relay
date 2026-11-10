@@ -145,39 +145,117 @@ final class Store {
         }
         return agent;
     }
-    Map<String,Object> snapshot() {
-        var devices=rows("SELECT id,name,platform,roots,capabilities,processes,last_seen,machine_id FROM devices WHERE merged_into IS NULL AND owner_user_id=? ORDER BY name",owner());
-        Map<Object,Map<String,Object>> byId=new HashMap<>();
+    private List<Map<String,Object>> deviceSummaries() {
+        var devices=rows("""
+            SELECT d.id,d.name,d.platform,d.roots,d.capabilities,d.processes,d.last_seen,d.machine_id,
+             (SELECT COUNT(*) FROM agents a WHERE a.device_id=d.id AND a.merged_into IS NULL) session_count
+            FROM devices d WHERE d.merged_into IS NULL AND d.owner_user_id=? ORDER BY d.name
+            """,owner());
         for (var device : devices) {
             for (String key : List.of("roots","capabilities","processes")) device.put(key,decode(device.get(key)));
             device.put("online",now()-number(device.get("last_seen"))<15);
-            byId.put(device.get("id"),device);
         }
-        var agents=rows("""
-            SELECT a.*,d.name device_name,
-             (SELECT LEFT(content,140) FROM messages WHERE agent_id=a.id AND duplicate_of IS NULL ORDER BY created_at DESC LIMIT 1) native_preview,
-             (SELECT created_at FROM messages WHERE agent_id=a.id AND duplicate_of IS NULL ORDER BY created_at DESC LIMIT 1) native_at,
-             (SELECT LEFT(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.prompt')),140) FROM jobs WHERE agent_id=a.id ORDER BY created_at DESC LIMIT 1) job_preview,
-             (SELECT created_at FROM jobs WHERE agent_id=a.id ORDER BY created_at DESC LIMIT 1) job_at
-            FROM agents a JOIN devices d ON d.id=a.device_id WHERE d.merged_into IS NULL AND a.merged_into IS NULL AND d.owner_user_id=? ORDER BY a.created_at DESC
-            """,owner());
-        Set<Object> busy=new HashSet<>();
-        for (var j : rows("SELECT agent_id FROM jobs WHERE status IN ('running','cancelling')")) busy.add(j.get("agent_id"));
-        for (var a : agents) {
-            decorateAgent(a,byId.get(a.get("device_id")));
-            a.put("busy",busy.contains(a.get("id")) || truth(a.get("external_busy")));
-            Object nativeAt=a.remove("native_at"),jobAt=a.remove("job_at");
-            Object nativePreview=a.remove("native_preview"),jobPreview=a.remove("job_preview");
-            double nativeTime=nativeAt==null ? 0:number(nativeAt),jobTime=jobAt==null ? 0:number(jobAt);
-            double observedTime=Math.max(number(a.get("last_activity")),nativeTime);
-            double initialTime="native".equals(a.get("origin")) && observedTime>0 ? observedTime : number(a.get("created_at"));
-            a.put("last_activity",Math.max(initialTime,Math.max(observedTime,jobTime)));
-            Object preview=jobAt!=null && (nativeAt==null || jobTime>=nativeTime) ? jobPreview : nativePreview;
-            a.put("preview",preview==null ? "" : preview);
+        return devices;
+    }
+    private static final String SESSION_QUERY="""
+        SELECT history.*,
+         GREATEST(CASE WHEN origin='native' AND GREATEST(last_activity,COALESCE(native_at,0))>0 THEN 0 ELSE created_at END,
+          last_activity,COALESCE(native_at,0),COALESCE(job_at,0)) activity,
+         CASE WHEN job_at IS NOT NULL AND (native_at IS NULL OR job_at>=native_at) THEN job_preview ELSE COALESCE(native_preview,'') END preview
+        FROM (
+         SELECT a.*,d.name device_name,
+          (SELECT LEFT(content,140) FROM messages WHERE agent_id=a.id AND duplicate_of IS NULL ORDER BY created_at DESC,id DESC LIMIT 1) native_preview,
+          (SELECT created_at FROM messages WHERE agent_id=a.id AND duplicate_of IS NULL ORDER BY created_at DESC,id DESC LIMIT 1) native_at,
+          (SELECT LEFT(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.prompt')),140) FROM jobs WHERE agent_id=a.id ORDER BY created_at DESC,id DESC LIMIT 1) job_preview,
+          (SELECT created_at FROM jobs WHERE agent_id=a.id ORDER BY created_at DESC,id DESC LIMIT 1) job_at,
+          EXISTS(SELECT 1 FROM jobs WHERE agent_id=a.id AND status IN ('running','cancelling')) relay_busy
+         FROM agents a JOIN devices d ON d.id=a.device_id
+         WHERE d.merged_into IS NULL AND a.merged_into IS NULL AND d.owner_user_id=?
+        ) history
+        """;
+    private List<Map<String,Object>> decorateSessions(List<Map<String,Object>> agents,List<Map<String,Object>> devices) {
+        Map<Object,Map<String,Object>> byId=new HashMap<>();
+        for(var device:devices)byId.put(device.get("id"),device);
+        for(var agent:agents) {
+            decorateAgent(agent,byId.get(agent.get("device_id")));
+            agent.put("last_activity",agent.remove("activity"));
+            agent.put("busy",truth(agent.remove("relay_busy")) || truth(agent.get("external_busy")));
+            for(String key:List.of("native_at","job_at","native_preview","job_preview"))agent.remove(key);
         }
-        var jobs=rows("SELECT j.*,d.name device_name,a.name agent_name,a.kind agent_kind FROM jobs j JOIN devices d ON d.id=j.device_id LEFT JOIN agents a ON a.id=j.agent_id WHERE d.owner_user_id=? ORDER BY j.created_at DESC LIMIT 100",owner());
+        return agents;
+    }
+    private record SessionCursor(double time,String id) {}
+    private SessionCursor sessionCursor(String value) {
+        if(value==null)return null;
+        String[] parts=value.split("\\|",-1);
+        try {
+            double time=Double.parseDouble(parts[0]);
+            if(parts.length!=2 || !Double.isFinite(time) || time<0 || !parts[1].matches("agt_[a-zA-Z0-9]+"))throw new NumberFormatException();
+            return new SessionCursor(time,parts[1]);
+        } catch(NumberFormatException e) { throw new ApiException("会话分页参数无效"); }
+    }
+    private Map<String,Object> sessionPage(String device,String query,String before,String through,List<Map<String,Object>> devices) {
+        if(query==null)query="";
+        if(query.length()>200)throw new ApiException("搜索内容不能超过 200 个字符");
+        String filter=" WHERE 1=1";
+        List<Object> args=new ArrayList<>();args.add(owner());
+        if(device!=null && !device.isEmpty()) { filter+=" AND device_id=?";args.add(device); }
+        if(!query.isBlank()) {
+            filter+=" AND LOWER(CONCAT_WS(' ',name,cwd,kind,IF(kind='claude','Claude Code','Codex'),device_name,preview)) LIKE ? ESCAPE '='";
+            args.add("%"+query.strip().toLowerCase(Locale.ROOT).replace("=","==").replace("%","=%").replace("_","=_")+"%");
+        }
+        var cursor=sessionCursor(before);var end=sessionCursor(through);
+        if(cursor!=null && end!=null)throw new ApiException("会话分页参数无效");
+        String window=filter;
+        List<Object> pageArgs=new ArrayList<>(args);
+        if(cursor!=null) {
+            window+=" AND (activity<? OR (activity=? AND id>?))";
+            pageArgs.addAll(List.of(cursor.time(),cursor.time(),cursor.id()));
+        }
+        if(end!=null) {
+            // Poll the loaded portion of the list without pulling older pages.
+            window+=" AND (activity>? OR (activity=? AND id<=?))";
+            pageArgs.addAll(List.of(end.time(),end.time(),end.id()));
+        }
+        String source="("+SESSION_QUERY+") sessions";
+        var agents=rows("SELECT * FROM "+source+window+" ORDER BY activity DESC,id"+(end==null ? " LIMIT 31" : ""),pageArgs.toArray());
+        if(end!=null && agents.isEmpty())return sessionPage(device,query,null,null,devices);
+        boolean more=agents.size()>30 && end==null;
+        if(more)agents=new ArrayList<>(agents.subList(0,30));
+        String next=null;
+        if(!agents.isEmpty()) {
+            var last=agents.get(agents.size()-1);
+            double time=number(last.get("activity"));String id=text(last.get("id"));
+            next=Double.toString(time)+"|"+id;
+            if(end!=null) {
+                args.addAll(List.of(time,time,id));
+                more=!rows("SELECT 1 FROM "+source+filter+" AND (activity<? OR (activity=? AND id>?)) LIMIT 1",args.toArray()).isEmpty();
+            }
+        }
+        return map("agents",decorateSessions(agents,devices),"has_more",more,"next_cursor",more ? next:null);
+    }
+    Map<String,Object> sessions(String device,String query,String before) {
+        return sessionPage(device,query,before,null,deviceSummaries());
+    }
+    Map<String,Object> snapshot() { return snapshot(false,null,null,null,null); }
+    Map<String,Object> snapshot(boolean web,String device,String query,String through,String selected) {
+        var devices=deviceSummaries();
+        var page=web ? sessionPage(device,query,null,through,devices) : null;
+        Object agents=web ? page.get("agents") : decorateSessions(rows("SELECT * FROM ("+SESSION_QUERY+") sessions ORDER BY created_at DESC",owner()),devices);
+        var jobs=rows("SELECT j.*,d.name device_name,a.name agent_name,a.kind agent_kind FROM jobs j JOIN devices d ON d.id=j.device_id LEFT JOIN agents a ON a.id=j.agent_id WHERE d.owner_user_id=?"+(web ? " AND j.kind='file_read'" : "")+" ORDER BY j.created_at DESC LIMIT 100",owner());
         for (var j : jobs) j.put("payload",decode(j.get("payload")));
-        return map("devices",devices,"agents",agents,"jobs",jobs,"artifacts",rows("SELECT f.* FROM artifacts f JOIN jobs j ON j.id=f.job_id JOIN devices d ON d.id=j.device_id WHERE d.owner_user_id=? ORDER BY f.created_at DESC LIMIT 100",owner()),"server_time",now());
+        var result=map("devices",devices,"agents",agents,"jobs",jobs,"artifacts",rows("SELECT f.* FROM artifacts f JOIN jobs j ON j.id=f.job_id JOIN devices d ON d.id=j.device_id WHERE d.owner_user_id=? ORDER BY f.created_at DESC LIMIT 100",owner()),"server_time",now());
+        if(web) {
+            result.put("has_more",page.get("has_more"));result.put("next_cursor",page.get("next_cursor"));
+            var remembered=List.<Map<String,Object>>of();
+            if(selected!=null && !selected.isEmpty()) {
+                boolean scoped=device!=null && !device.isEmpty();
+                remembered=decorateSessions(rows("SELECT * FROM ("+SESSION_QUERY+") sessions WHERE id=?"+(scoped ? " AND device_id=?" : ""),
+                    scoped ? new Object[]{owner(),selected,device} : new Object[]{owner(),selected}),devices);
+            }
+            result.put("selected_agent",remembered.isEmpty() ? null : remembered.get(0));
+        }
+        return result;
     }
     Map<String,Object> register(Map<String,Object> body) {
         String name = required(body,"name",80);

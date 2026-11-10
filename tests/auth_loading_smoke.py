@@ -4,6 +4,7 @@ from pathlib import Path
 import secrets
 import sys
 import tempfile
+import time
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from scripts.devtools import Client,Server
@@ -39,10 +40,16 @@ def main():
        new MutationObserver(observe).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['hidden']});
       ''')
       identity=[];state=[]
+      def pending(routes):
+       deadline=time.monotonic()+5
+       while not routes:
+        assert time.monotonic()<deadline,'Expected a pending browser request'
+        page.wait_for_timeout(10)
+       return routes.pop(0)
       message_requests=[]
       page.on('request',lambda request:message_requests.append(request.url) if '/messages' in request.url else None)
       page.route('**/api/auth/session',lambda route:identity.append(route))
-      page.route('**/api/state',lambda route:state.append(route))
+      page.route('**/api/state?*',lambda route:state.append(route))
       context.add_cookies([{'name':'relay_session','value':cookie,'url':base,'httpOnly':True,'sameSite':'Lax'}])
       page.goto(base,wait_until='domcontentloaded')
       expect(page.locator('#session-loading')).to_be_visible()
@@ -51,14 +58,14 @@ def main():
       assert identity and not state
       expect(page.locator('#login')).not_to_be_visible()
       expect(page.locator('#workspace')).not_to_be_visible()
-      identity.pop(0).continue_()
+      pending(identity).continue_()
       # Identity is valid but loading the workspace is still pending.
       page.wait_for_function('()=>signedIn')
       expect(page.locator('#session-loading')).to_be_visible()
       expect(page.locator('#session-loading-message')).to_have_text('正在同步设备和会话…')
       expect(page.locator('#login')).not_to_be_visible()
       assert state
-      state.pop(0).continue_()
+      pending(state).continue_()
       expect(page.locator('#workspace')).to_be_visible()
       expect(page.locator('#thread-empty')).to_be_visible()
       assert len(message_requests)==1,'Opening the first conversation fetched its messages more than once'
@@ -68,33 +75,32 @@ def main():
       page.reload(wait_until='domcontentloaded')
       expect(page.locator('#session-loading')).to_be_visible()
       page.wait_for_function('()=>document.readyState === "complete"')
-      identity.pop(0).continue_()
+      pending(identity).continue_()
       page.wait_for_function('()=>signedIn')
-      state.pop(0).fulfill(status=503,content_type='application/json',body='{"error":"temporary fixture failure"}')
+      pending(state).fulfill(status=503,content_type='application/json',body='{"error":"temporary fixture failure"}')
       expect(page.locator('#retry-session')).to_be_visible()
       expect(page.locator('#login')).not_to_be_visible()
       assert not page.evaluate('window.loginWasVisible')
       page.locator('#retry-session').click()
       expect(page.locator('#retry-session')).not_to_be_visible()
-      assert identity
-      identity.pop(0).continue_()
+      pending(identity).continue_()
       page.wait_for_function('()=>signedIn')
       page.wait_for_timeout(50)
       assert state
-      state.pop(0).continue_()
+      pending(state).continue_()
       expect(page.locator('#workspace')).to_be_visible()
       assert not page.evaluate('window.loginWasVisible')
 
       # A failed identity lookup is recoverable and does not pretend the cookie expired.
       page.reload(wait_until='domcontentloaded')
       page.wait_for_function('()=>document.readyState === "complete"')
-      identity.pop(0).fulfill(status=503,content_type='application/json',body='{"error":"temporary fixture failure"}')
+      pending(identity).fulfill(status=503,content_type='application/json',body='{"error":"temporary fixture failure"}')
       expect(page.locator('#retry-session')).to_be_visible()
       expect(page.locator('#login')).not_to_be_visible()
       page.locator('#retry-session').click()
-      identity.pop(0).continue_()
+      pending(identity).continue_()
       page.wait_for_function('()=>signedIn')
-      state.pop(0).continue_()
+      pending(state).continue_()
       expect(page.locator('#workspace')).to_be_visible()
       assert not page.evaluate('window.loginWasVisible')
 
@@ -103,7 +109,7 @@ def main():
       page.reload(wait_until='domcontentloaded')
       page.wait_for_function('()=>document.readyState === "complete"')
       expect(page.locator('#login')).not_to_be_visible()
-      identity.pop(0).continue_()
+      pending(identity).continue_()
       expect(page.locator('#login')).to_be_visible()
       expect(page.locator('#session-loading')).not_to_be_visible()
       expect(page.locator('#workspace')).not_to_be_visible()
