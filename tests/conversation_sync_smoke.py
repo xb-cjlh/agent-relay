@@ -1,4 +1,5 @@
 """Keep native updates visible while a Relay task is running or queued."""
+import hashlib
 import sys
 import tempfile
 import time
@@ -7,18 +8,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.devtools import Client, Server
 from test_relay import TOKEN
+from test_accounts import PNG
+from oss_support import OssFixture, upload_image
 from playwright.sync_api import expect, sync_playwright
 
 
 def main():
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
-        server = Server(('127.0.0.1', 0), root / 'data', TOKEN)
+        oss = OssFixture()
+        server = Server(('127.0.0.1', 0), root / 'data', TOKEN, environment=oss.environment())
         base = 'http://127.0.0.1:' + str(server.server_port)
         client = Client(base, TOKEN)
         identity = client.request('POST', '/api/register', {
             'name': 'sync-fixture', 'platform': 'fixture', 'roots': [],
-            'capabilities': {'codex': True, 'claude': True, 'unlimited_tasks': True}})
+            'capabilities': {'codex': True, 'claude': True, 'unlimited_tasks': True, 'image_input': True}})
         device = Client(base, identity['token'])
         try:
             with sync_playwright() as p:
@@ -29,15 +33,19 @@ def main():
                             'device': identity['id'], 'name': name + '-' + kind,
                             'kind': kind, 'cwd': str(root)})
                         prompt = 'relay question ' + name + kind
-                        job = client.request('POST', '/api/jobs', {'kind': 'prompt', 'agent': agent['id'], 'prompt': prompt})
+                        images = [upload_image(client, PNG) for _ in range(2 if kind == 'codex' else 1)]
+                        job = client.request('POST', '/api/jobs', {'kind': 'prompt', 'agent': agent['id'], 'prompt': prompt, 'images': [image['id'] for image in images]})
                         claimed = device.request('POST', '/api/device/poll', {'capacity': 1})['jobs']
                         started = next(j['started_at'] for j in claimed if j['id'] == job['id'])
                         stamp = time.time()
                         first = 'first streamed update\n\nSecond paragraph 👋.\n\n```text\nline one\nline two\n```'
+                        native_prompt = prompt
+                        if kind == 'codex':
+                            native_prompt += '\n' + '\n'.join(f'<image name=[Image #{i + 1}] path="{root}/device/images/{image["id"]}.png">\n</image>' for i, image in enumerate(images))
                         session = {'kind': kind, 'session_id': name + '-' + kind, 'name': kind,
                                    'cwd': str(root), 'busy': True, 'updated_at': stamp,
                                    'messages': [
-                                       {'id': name + kind + '-user', 'role': 'user', 'content': prompt, 'created_at': started - 1.65},
+                                       {'id': name + kind + '-user', 'role': 'user', 'content': native_prompt, 'created_at': started - 1.65},
                                        {'id': name + kind + '-echo', 'role': 'assistant', 'content': first, 'created_at': stamp}]}
                         device.request('POST', '/api/device/poll', {
                             'active': [{'id': job['id'], 'session_id': session['session_id'], 'output': first + '\n'}],
@@ -54,6 +62,17 @@ def main():
                         page.set_viewport_size({'width': 1100 if session['kind'] == 'codex' else 390, 'height': 700})
                         page.locator('[data-agent="' + agent['id'] + '"]').evaluate('(el)=>el.click()')
                         expect(page.locator('#messages')).to_contain_text('first streamed update')
+                        expect(page.locator('#messages .user')).to_have_count(1)
+                        expect(page.locator('#messages .user .message-images img')).to_have_count(len(job['payload']['images']))
+                        expect(page.locator('#messages .user .message-images img').first).to_have_js_property('naturalWidth', 1)
+                        expect(page.locator('#messages .user .message-body')).not_to_contain_text('<image')
+                        # Remove an already cached pre-fix echo on the next poll.
+                        echo_id = hashlib.sha256((identity['id'] + ':' + name + session['kind'] + '-user').encode()).hexdigest()
+                        page.evaluate('''({job, content, id})=>{
+                            messages.set(id, {id, role:'user', content, created_at:job.created_at+1});
+                            renderMessages();
+                        }''', {'job': job, 'content': native_prompt, 'id': echo_id})
+                        page.evaluate('loadConversation()')
                         expect(page.locator('#messages .user')).to_have_count(1)
                         queued = client.request('POST', '/api/jobs', {'kind': 'prompt', 'agent': agent['id'], 'prompt': 'queued next question'})
                         latest = 'native reply missing from task stream: ' + name + session['kind']
@@ -102,11 +121,16 @@ def main():
                         expect(page.locator('#stop-generation')).not_to_be_visible(timeout=15000)
                         expect(page.locator('#messages')).to_contain_text(final)
                         client.request('POST', '/api/jobs/' + queued['id'] + '/cancel', {})
+                        page.reload()
+                        expect(page.locator('#messages [data-id="' + job['id'] + ':user"]')).to_have_count(1)
+                        expect(page.locator('#messages .user .message-images img')).to_have_count(len(job['payload']['images']))
+                        expect(page.locator('#messages .user .message-images img').first).to_have_js_property('naturalWidth', 1)
                     assert not errors, errors
                     browser.close()
                     print(name + ': Codex/Claude message boundaries, Markdown, partial streaming, native catch-up deduplication and retained final replies passed', flush=True)
         finally:
             server.close()
+            oss.close()
 
 
 if __name__ == '__main__':

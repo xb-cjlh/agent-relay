@@ -10,6 +10,7 @@ import java.nio.file.*;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.sql.*;
 import java.util.*;
+import java.util.regex.Pattern;
 import static dev.relay.Values.*;
 
 @Component
@@ -282,14 +283,14 @@ final class Store {
         var agent = agent(ref); var jobs = rows("SELECT * FROM jobs WHERE agent_id=? ORDER BY created_at,id",agent.get("id"));
         var messages = rows("SELECT * FROM messages WHERE agent_id=? AND duplicate_of IS NULL ORDER BY created_at,id",agent.get("id"));
         var relayMessages = new ArrayList<Map<String,Object>>();
-        Map<Object,String> prompts = new HashMap<>();
+        Map<Object,Map<String,Object>> payloads = new HashMap<>();
         List<Object> active = new ArrayList<>();
         Set<Object> assistantCopies = new HashSet<>();
         double current = now();
         for (var j : jobs) {
             String id = text(j.get("id")); double created = number(j.get("created_at"));
             var payload=object(decode(j.get("payload")));
-            prompts.put(id,text(payload.getOrDefault("prompt","")));
+            payloads.put(id,payload);
             relayMessages.add(map("id",id+":user","role","user","content",payload.get("prompt"),"images",payload.getOrDefault("images",List.of()),"created_at",created,"job_id",id,"status",j.get("status"),"error",j.get("error")));
             relayMessages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"segments",assistantSegments(j,messages,assistantCopies,current),"diagnostics",j.get("diagnostics"),"created_at",created+0.000001,"job_id",id,"status",j.get("status"),"error",j.get("error")));
             if (!TERMINAL.contains(j.get("status"))) active.add(map("id",id,"status",j.get("status")));
@@ -304,11 +305,14 @@ final class Store {
             if (j.get("started_at")==null) continue;
             double start = number(j.get("started_at"));
             double end = j.get("finished_at")==null ? current : number(j.get("finished_at"));
-            String prompt = prompts.get(j.get("id")).strip();
+            var payload = payloads.get(j.get("id"));
+            String prompt = text(payload.getOrDefault("prompt","")).strip();
             messages.stream().filter(m -> "user".equals(m.get("role")) && !userCopies.contains(m.get("id"))
-                && !prompt.isEmpty() && prompt.equals(text(m.get("content")).strip())
+                && userEchoMatches(payload,text(m.get("content")))
                 && number(m.get("created_at"))>=start-30 && number(m.get("created_at"))<=end+30)
-                .min(Comparator.<Map<String,Object>>comparingDouble(m -> Math.abs(number(m.get("created_at"))-start))
+                // An exact attachment match is stronger than matching text alone.
+                .min(Comparator.<Map<String,Object>>comparingInt(m -> prompt.equals(text(m.get("content")).strip()) ? 1 : 0)
+                    .thenComparingDouble(m -> Math.abs(number(m.get("created_at"))-start))
                     .thenComparingDouble(m -> number(m.get("created_at"))).thenComparing(m -> text(m.get("id"))))
                 .ifPresent(m -> userCopies.add(m.get("id")));
         }
@@ -329,6 +333,28 @@ final class Store {
         var approvals=rows("SELECT p.* FROM job_approvals p JOIN jobs j ON j.id=p.job_id WHERE j.agent_id=? AND p.decision='pending' AND j.status='running' ORDER BY p.created_at LIMIT 32",agent.get("id"));
         for(var approval:approvals)approval.put("details",decode(approval.get("details")));
         return map("agent",agent,"messages",messages.subList(Math.max(0,messages.size()-100),messages.size()),"has_more",messages.size()>100,"active_jobs",active,"approvals",approvals,"suppressed_message_ids",suppressed);
+    }
+    private static final Pattern NATIVE_IMAGE = Pattern.compile("<image name=\\[Image #(\\d+)\\] path=\"([^\"\\r\\n]+)\">\\s*</image>");
+    // Codex serializes attached local images as trailing text in its transcript.
+    // Match only this task's exact attachments; literal markup and other images
+    // are independent messages, and the canonical message keeps its thumbnails.
+    boolean userEchoMatches(Map<String,Object> payload, String content) {
+        String prompt = text(payload.getOrDefault("prompt","")).strip();
+        String nativeText = content.strip();
+        if (prompt.isEmpty()) return false;
+        if (prompt.equals(nativeText)) return true;
+        var images = list(payload.getOrDefault("images",List.of()),4);
+        if (images.isEmpty() || !nativeText.startsWith(prompt+"\n")) return false;
+        String suffix = nativeText.substring(prompt.length()).strip();
+        for (int i=0; i<images.size(); i++) {
+            var image = object(images.get(i));
+            var match = NATIVE_IMAGE.matcher(suffix);
+            if (!match.lookingAt() || !match.group(1).equals(Integer.toString(i+1))) return false;
+            String extension = "image/png".equals(image.get("mime")) ? ".png" : ".jpeg";
+            if (!match.group(2).endsWith("/images/"+text(image.get("id"))+extension)) return false;
+            suffix = suffix.substring(match.end()).strip();
+        }
+        return suffix.isEmpty();
     }
     // Task output is a flat compatibility log. Use complete native messages to
     // recover its boundaries, never Markdown paragraphs or individual newlines.

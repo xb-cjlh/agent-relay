@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from scripts.devtools import APIError
@@ -184,3 +185,73 @@ class ExecutionCase(unittest.TestCase):
             caught_up = self.client.request('GET', path)
             self.assertEqual(parts(caught_up), [first, second, first, '还在继续…'])
             self.assertEqual(len(caught_up['suppressed_message_ids']), 4)
+
+    def test_image_user_echoes_match_only_the_attached_images(self):
+        _, device = self.register()
+        prompt = 'Look at this screenshot\nKeep this literal: <image>example</image>'
+
+        def tag(image, index=1):
+            return f'<image name=[Image #{index}] path="/Users/fixture/Relay data/images/{image}">\n</image>'
+
+        for kind, ids in [('codex', ['img_first']), ('codex', ['img_one', 'img_two']), ('claude', ['img_claude'])]:
+            agent = self.create_agent(name=kind + '-' + ids[0], kind=kind)
+            job = self.prompt(agent, prompt)
+            device.request('POST', '/api/device/poll', {'capacity': 1})
+            images = [{'id': image, 'mime': 'image/png' if i == 0 else 'image/jpeg'} for i, image in enumerate(ids)]
+            payload = {**job['payload'], 'images': images}
+            self.server.database.execute('UPDATE jobs SET created_at=999,started_at=1000,payload=? WHERE id=?', (json.dumps(payload), job['id']))
+            files = [image['id'] + ('.png' if image['mime'] == 'image/png' else '.jpeg') for image in images]
+            suffix = '\n'.join(tag(file, i + 1) for i, file in enumerate(files))
+            echo = prompt + '\n' + suffix if kind == 'codex' else prompt
+            # A valid echo arriving after other messages must still replace only
+            # one copy. Other images, extra text and literal markup remain visible.
+            other = prompt + '\n' + tag('img_other.png')
+            session = {'kind': kind, 'session_id': kind + '-' + ids[0], 'name': kind,
+                       'cwd': str(self.root), 'busy': True, 'updated_at': 1005,
+                       'messages': [
+                           {'id': 'echo', 'role': 'user', 'content': echo, 'created_at': 998.35},
+                           {'id': 'real-repeat', 'role': 'user', 'content': echo, 'created_at': 1005},
+                           {'id': 'other-image', 'role': 'user', 'content': other, 'created_at': 1000},
+                           {'id': 'extra-text', 'role': 'user', 'content': prompt + '\n' + suffix + '\nextra instruction', 'created_at': 1001},
+                           {'id': 'incomplete-images', 'role': 'user', 'content': prompt + '\n' + tag(files[0]) + '\n<image>keep me</image>', 'created_at': 1002}]}
+            if kind == 'codex':
+                session['messages'].append({'id': 'text-only-repeat', 'role': 'user', 'content': prompt, 'created_at': 1000})
+            if len(files) == 2:
+                session['messages'].extend([
+                    {'id': 'missing-image', 'role': 'user', 'content': prompt + '\n' + tag(files[0]), 'created_at': 1000},
+                    {'id': 'reordered-images', 'role': 'user', 'content': prompt + '\n' + tag(files[1]) + '\n' + tag(files[0], 2), 'created_at': 1000}])
+            expected_questions = len(session['messages'])
+            for message in session['messages']:
+                message['id'] = agent['id'] + '-' + message['id']
+            device.request('POST', '/api/device/poll', {'active': [{'id': job['id'], 'session_id': session['session_id'], 'output': ''}], 'sessions': [session]})
+            path = '/api/agents/' + agent['id'] + '/messages'
+            reply = self.client.request('GET', path)
+            questions = [m for m in reply['messages'] if m['role'] == 'user']
+            self.assertEqual(len(questions), expected_questions)
+            self.assertEqual(len(reply['suppressed_message_ids']), 1)
+            canonical = next(m for m in questions if m['id'] == job['id'] + ':user')
+            self.assertEqual(canonical['content'], prompt)
+            self.assertEqual(canonical['images'], images)
+            if kind == 'codex':
+                self.assertTrue(any(m['content'] == prompt and not m.get('job_id') for m in questions))
+            self.assertIn(other, [m['content'] for m in questions])
+            self.assertEqual(sum(m['content'] == echo and not m.get('job_id') for m in questions), 1)
+            # Queued sends never consume another copy, even with the same images.
+            queued = self.prompt(agent, prompt)
+            self.server.database.execute('UPDATE jobs SET payload=? WHERE id=?', (json.dumps(payload), queued['id']))
+            self.assertEqual(len(self.client.request('GET', path)['suppressed_message_ids']), 1)
+            device.request('POST', '/api/device/jobs/' + job['id'] + '/complete', {'status': 'succeeded', 'output': 'done'})
+            self.assertEqual(len(self.client.request('GET', path)['suppressed_message_ids']), 1)
+            self.client.request('POST', '/api/jobs/' + queued['id'] + '/cancel', {})
+
+        # Image-like user text without an attachment is never normalized away.
+        agent = self.create_agent(name='no-images')
+        job = self.prompt(agent, prompt)
+        device.request('POST', '/api/device/poll', {'capacity': 1})
+        session.update(kind='codex', session_id='no-images', messages=[{
+            'id': 'literal-image', 'role': 'user', 'content': prompt + '\n' + tag('img_first.png'), 'created_at': 1000}])
+        self.server.database.execute('UPDATE jobs SET started_at=1000 WHERE id=?', (job['id'],))
+        device.request('POST', '/api/device/poll', {'active': [{'id': job['id'], 'session_id': 'no-images', 'output': ''}], 'sessions': [session]})
+        reply = self.client.request('GET', '/api/agents/' + agent['id'] + '/messages')
+        self.assertEqual(len([m for m in reply['messages'] if m['role'] == 'user']), 2)
+        self.assertEqual(reply['suppressed_message_ids'], [])
