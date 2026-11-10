@@ -33,13 +33,14 @@ def main():
                         claimed = device.request('POST', '/api/device/poll', {'capacity': 1})['jobs']
                         started = next(j['started_at'] for j in claimed if j['id'] == job['id'])
                         stamp = time.time()
+                        first = 'first streamed update\n\nSecond paragraph 👋.\n\n```text\nline one\nline two\n```'
                         session = {'kind': kind, 'session_id': name + '-' + kind, 'name': kind,
                                    'cwd': str(root), 'busy': True, 'updated_at': stamp,
                                    'messages': [
                                        {'id': name + kind + '-user', 'role': 'user', 'content': prompt, 'created_at': started - 1.65},
-                                       {'id': name + kind + '-echo', 'role': 'assistant', 'content': 'first streamed update', 'created_at': stamp}]}
+                                       {'id': name + kind + '-echo', 'role': 'assistant', 'content': first, 'created_at': stamp}]}
                         device.request('POST', '/api/device/poll', {
-                            'active': [{'id': job['id'], 'session_id': session['session_id'], 'output': 'first streamed update\n'}],
+                            'active': [{'id': job['id'], 'session_id': session['session_id'], 'output': first + '\n'}],
                             'sessions': [session]})
                         agents.append((agent, job, session))
                     chrome = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
@@ -50,6 +51,7 @@ def main():
                     page.goto(base)
                     server.browser_login(page)
                     for agent, job, session in agents:
+                        page.set_viewport_size({'width': 1100 if session['kind'] == 'codex' else 390, 'height': 700})
                         page.locator('[data-agent="' + agent['id'] + '"]').evaluate('(el)=>el.click()')
                         expect(page.locator('#messages')).to_contain_text('first streamed update')
                         expect(page.locator('#messages .user')).to_have_count(1)
@@ -69,10 +71,24 @@ def main():
                         expect(page.locator('#messages [data-id="' + native_id + '"]')).to_have_count(1)
 
                         # Once the task stream catches up, remove the cached native copy.
-                        output = 'first streamed update\n' + latest + '\n'
+                        output = first + '\n' + latest + '\n'
                         device.request('POST', '/api/device/poll', {'active': [{'id': job['id'], 'output': output}]})
                         expect(page.locator('#messages [data-id="' + native_id + '"]')).to_have_count(0, timeout=15000)
                         expect(page.locator('#messages .assistant .message-body').filter(has_text=latest)).to_have_count(1)
+                        task = page.locator('#messages [data-id="' + job['id'] + ':assistant"]')
+                        expect(task.locator('.message-part')).to_have_count(2)
+                        expect(task.locator('.message-byline')).to_have_count(2)
+                        expect(task.locator('.message-part').first.locator('p')).to_have_count(2)
+                        expect(task.locator('.message-part').first.locator('pre code')).to_have_text('line one\nline two\n')
+                        gap = task.locator('.message-part').evaluate_all('(nodes)=>nodes[1].getBoundingClientRect().top-nodes[0].getBoundingClientRect().bottom')
+                        assert gap >= 29, gap
+
+                        # A not-yet-mirrored message streams into its own final block.
+                        for partial in ['Partial follow-up', 'Partial follow-up complete']:
+                            device.request('POST', '/api/device/poll', {'active': [{'id': job['id'], 'output': output + partial}]})
+                            expect(task.locator('.message-part')).to_have_count(3, timeout=15000)
+                            expect(task.locator('.message-part').last.locator('.message-body')).to_have_text(partial)
+                        output += 'Partial follow-up complete'
 
                         final = 'final native message while task output is stale: ' + session['kind']
                         stamp = time.time()
@@ -88,7 +104,7 @@ def main():
                         client.request('POST', '/api/jobs/' + queued['id'] + '/cancel', {})
                     assert not errors, errors
                     browser.close()
-                    print(name + ': Codex/Claude native replies visible during active/queued jobs, task catch-up deduplicated and final replies retained', flush=True)
+                    print(name + ': Codex/Claude message boundaries, Markdown, partial streaming, native catch-up deduplication and retained final replies passed', flush=True)
         finally:
             server.close()
 

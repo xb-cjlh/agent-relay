@@ -141,3 +141,46 @@ class ExecutionCase(unittest.TestCase):
             self.assertEqual({m['job_id'] for m in questions if m.get('job_id')}, {first['id'], second['id']})
             self.assertEqual(len(repeated['suppressed_message_ids']), 2)
             device.request('POST', '/api/device/jobs/' + second['id'] + '/complete', {'status': 'succeeded', 'output': 'second answer'})
+
+    def test_streamed_assistant_messages_preserve_native_boundaries(self):
+        _, device = self.register()
+        for kind in ['codex', 'claude']:
+            agent = self.create_agent(name=kind + '-boundaries', kind=kind)
+            job = self.prompt(agent)
+            device.request('POST', '/api/device/poll', {'capacity': 1})
+            self.server.database.execute('UPDATE jobs SET started_at=1000 WHERE id=?', (job['id'],))
+            first = '先检查项目 👋。\n\n这是同一条消息的第二段。'
+            second = '找到结果：\n\n```text\nline one\nline two\n```'
+            session = {'kind': kind, 'session_id': kind + '-boundary-session', 'name': kind,
+                       'cwd': str(self.root), 'busy': True, 'updated_at': 1004,
+                       'messages': [
+                           {'id': kind + '-first', 'role': 'assistant', 'content': first, 'created_at': 1001},
+                           {'id': kind + '-second', 'role': 'assistant', 'content': second, 'created_at': 1002},
+                           {'id': kind + '-repeat', 'role': 'assistant', 'content': first, 'created_at': 1003},
+                           {'id': kind + '-independent', 'role': 'assistant', 'content': 'independent native reply', 'created_at': 1004}]}
+            output = first + '\n' + second + '\n' + first + '\n还在继续…'
+            device.request('POST', '/api/device/poll', {
+                'active': [{'id': job['id'], 'session_id': session['session_id'], 'output': output}],
+                'sessions': [session]})
+            path = '/api/agents/' + agent['id'] + '/messages'
+
+            def parts(reply):
+                message = next(m for m in reply['messages'] if m['id'] == job['id'] + ':assistant')
+                # Java and JavaScript string offsets use UTF-16 code units.
+                text = message['content'].encode('utf-16-le')
+                return [text[p['start'] * 2:p['end'] * 2].decode('utf-16-le').strip()
+                        for p in message['segments']]
+
+            reply = self.client.request('GET', path)
+            self.assertEqual(parts(reply), [first, second, first, '还在继续…'])
+            self.assertEqual(len(reply['suppressed_message_ids']), 3)
+            self.assertIn('independent native reply', [m['content'] for m in reply['messages']])
+            device.request('POST', '/api/device/jobs/' + job['id'] + '/complete', {'status': 'succeeded', 'output': output})
+            self.assertEqual(parts(self.client.request('GET', path)), [first, second, first, '还在继续…'])
+
+            # Native history may catch up after execution has already finished.
+            session.update(messages=[{'id': kind + '-tail', 'role': 'assistant', 'content': '还在继续…', 'created_at': 1005}])
+            device.request('POST', '/api/device/poll', {'sessions': [session]})
+            caught_up = self.client.request('GET', path)
+            self.assertEqual(parts(caught_up), [first, second, first, '还在继续…'])
+            self.assertEqual(len(caught_up['suppressed_message_ids']), 4)

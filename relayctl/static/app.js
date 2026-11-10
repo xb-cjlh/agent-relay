@@ -396,16 +396,22 @@ function renderMessages() {
     const signature = JSON.stringify([message,agent?.kind]);
     if (node.dataset.signature !== signature) {
       node.className = 'message ' + message.role;
-      let body;
       const writerConflict = message.role === 'assistant' && message.status === 'failed' && agent?.kind === 'codex' && [message.content,message.diagnostics].some(value=>value?.includes('already has an active writer'));
       const error = writerConflict && message.error?.includes('exit status') ? '更新并重启目标设备的 Relay 后，可通过 Codex 共享服务继续。若设备未提供共享服务，请先在本机退出这个会话再发送。' : message.error;
-      if (writerConflict) body = `<p class="session-conflict">本次指令未执行：原会话仍由本机 Codex 持有。</p>${message.content ? `<details class="execution-details"><summary>技术详情</summary><pre>${esc(message.content)}</pre></details>` : ''}`;
-      else if (message.content) body = message.role === 'user' ? esc(message.content) : richText(message.content);
-      else if (['running','cancelling'].includes(message.status)) body = `<span class="typing">${message.status === 'cancelling' ? '正在停止…' : '正在回复…'}</span>`;
-      else body = message.status === 'failed' ? '' : message.status === 'cancelled' ? '已停止。' : '本轮已结束，没有文本输出。';
+      const parts = message.role === 'assistant' && message.segments?.length && !writerConflict
+        ? message.segments.map(segment => ({content: message.content.slice(segment.start,segment.end),created_at: segment.created_at})) : [message];
+      const body = parts.map(part => {
+        let text;
+        if (writerConflict) text = `<p class="session-conflict">本次指令未执行：原会话仍由本机 Codex 持有。</p>${message.content ? `<details class="execution-details"><summary>技术详情</summary><pre>${esc(message.content)}</pre></details>` : ''}`;
+        else if (part.content) text = message.role === 'user' ? esc(part.content) : richText(part.content);
+        else if (['running','cancelling'].includes(message.status)) text = `<span class="typing">${message.status === 'cancelling' ? '正在停止…' : '正在回复…'}</span>`;
+        else text = message.status === 'failed' ? '' : message.status === 'cancelled' ? '已停止。' : '本轮已结束，没有文本输出。';
+        if (message.role === 'user' && message.images?.length) text += `<div class="message-images">${message.images.map(img => `<a href="/api/images/${encodeURIComponent(img.id)}" data-view-image="${esc(img.id)}" target="_blank" rel="noopener noreferrer"><img data-image-id="${esc(img.id)}" alt="${esc(img.name)}" loading="lazy" crossorigin="anonymous" referrerpolicy="no-referrer"></a>`).join('')}</div>`;
+        if (message.role === 'user') return `<div class="message-body">${text}</div>`;
+        return `<section class="message-part"><div class="message-byline">${icon('agent')}<span>${kindName(agent?.kind)}</span><time>${date(part.created_at)}</time></div><div class="message-body">${text}</div></section>`;
+      }).join('');
       const queued = message.role === 'user' && message.status === 'queued';
-      if (message.role === 'user' && message.images?.length) body += `<div class="message-images">${message.images.map(img => `<a href="/api/images/${encodeURIComponent(img.id)}" data-view-image="${esc(img.id)}" target="_blank" rel="noopener noreferrer"><img data-image-id="${esc(img.id)}" alt="${esc(img.name)}" loading="lazy" crossorigin="anonymous" referrerpolicy="no-referrer"></a>`).join('')}</div>`;
-      node.innerHTML = `${message.role === 'assistant' ? `<div class="message-byline">${icon('agent')}<span>${kindName(agent?.kind)}</span><time>${date(message.created_at)}</time></div>` : ''}<div class="message-body">${body}</div>${queued ? `<div class="message-state">等待执行 <button data-cancel="${esc(message.job_id)}">取消</button></div>` : ''}${message.role === 'assistant' && message.content && ['running','cancelling'].includes(message.status) ? '<div class="message-state"><span class="dot busy"></span>正在回复</div>' : ''}${message.role === 'assistant' && error ? `<div class="message-error">${esc(error)}</div>` : ''}`;
+      node.innerHTML = `${body}${queued ? `<div class="message-state">等待执行 <button data-cancel="${esc(message.job_id)}">取消</button></div>` : ''}${message.role === 'assistant' && message.content && ['running','cancelling'].includes(message.status) ? '<div class="message-state"><span class="dot busy"></span>正在回复</div>' : ''}${message.role === 'assistant' && error ? `<div class="message-error">${esc(error)}</div>` : ''}`;
       if (message.role === 'assistant' && message.diagnostics) node.innerHTML += `<details class="execution-details"><summary>执行日志</summary><pre>${esc(message.diagnostics)}</pre></details>`;
       node.dataset.signature = signature;
     }

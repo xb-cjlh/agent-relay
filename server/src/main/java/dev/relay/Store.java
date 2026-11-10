@@ -284,18 +284,19 @@ final class Store {
         var relayMessages = new ArrayList<Map<String,Object>>();
         Map<Object,String> prompts = new HashMap<>();
         List<Object> active = new ArrayList<>();
+        Set<Object> assistantCopies = new HashSet<>();
+        double current = now();
         for (var j : jobs) {
             String id = text(j.get("id")); double created = number(j.get("created_at"));
             var payload=object(decode(j.get("payload")));
             prompts.put(id,text(payload.getOrDefault("prompt","")));
             relayMessages.add(map("id",id+":user","role","user","content",payload.get("prompt"),"images",payload.getOrDefault("images",List.of()),"created_at",created,"job_id",id,"status",j.get("status"),"error",j.get("error")));
-            relayMessages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"diagnostics",j.get("diagnostics"),"created_at",created+0.000001,"job_id",id,"status",j.get("status"),"error",j.get("error")));
+            relayMessages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"segments",assistantSegments(j,messages,assistantCopies,current),"diagnostics",j.get("diagnostics"),"created_at",created+0.000001,"job_id",id,"status",j.get("status"),"error",j.get("error")));
             if (!TERMINAL.contains(j.get("status"))) active.add(map("id",id,"status",j.get("status")));
         }
         // Native sync and task streaming can arrive at different times. Overlapping
         // execution times alone do not prove that a native message is represented.
         var suppressed = new ArrayList<String>();
-        double current = now();
         // A transcript uses the device clock; task timestamps use the server clock.
         // Pair at most one user echo with each started task so real repeats survive.
         Set<Object> userCopies = new HashSet<>();
@@ -312,12 +313,8 @@ final class Store {
                 .ifPresent(m -> userCopies.add(m.get("id")));
         }
         messages.removeIf(m -> {
-            String content = text(m.get("content")).strip();
-            double created = number(m.get("created_at"));
             boolean copied = "user".equals(m.get("role")) ? userCopies.contains(m.get("id"))
-                : !content.isEmpty() && jobs.stream().anyMatch(j -> j.get("started_at") != null
-                && number(j.get("started_at")) <= created && created <= (j.get("finished_at")==null ? current : number(j.get("finished_at")))
-                && ("\n"+text(j.get("output")).strip()+"\n").contains("\n"+content+"\n"));
+                : assistantCopies.contains(m.get("id"));
             if(copied)suppressed.add(text(m.get("id")));
             return copied;
         });
@@ -332,6 +329,35 @@ final class Store {
         var approvals=rows("SELECT p.* FROM job_approvals p JOIN jobs j ON j.id=p.job_id WHERE j.agent_id=? AND p.decision='pending' AND j.status='running' ORDER BY p.created_at LIMIT 32",agent.get("id"));
         for(var approval:approvals)approval.put("details",decode(approval.get("details")));
         return map("agent",agent,"messages",messages.subList(Math.max(0,messages.size()-100),messages.size()),"has_more",messages.size()>100,"active_jobs",active,"approvals",approvals,"suppressed_message_ids",suppressed);
+    }
+    // Task output is a flat compatibility log. Use complete native messages to
+    // recover its boundaries, never Markdown paragraphs or individual newlines.
+    // Offsets use UTF-16, matching JavaScript String.slice without copying text.
+    List<Map<String,Object>> assistantSegments(Map<String,Object> job, List<Map<String,Object>> messages, Set<Object> copies, double current) {
+        String output = text(job.get("output")), normalized = output.strip();
+        if (job.get("started_at")==null || normalized.isEmpty()) return List.of();
+        String wrapped = "\n"+normalized+"\n";
+        int base = output.indexOf(normalized), offset = 0;
+        double start = number(job.get("started_at"));
+        double end = job.get("finished_at")==null ? current : number(job.get("finished_at"));
+        double timestamp = number(job.get("created_at"))+0.000001;
+        var segments = new ArrayList<Map<String,Object>>();
+        for (var message : messages) {
+            double created = number(message.get("created_at"));
+            if (!"assistant".equals(message.get("role")) || copies.contains(message.get("id")) || created<start || created>end) continue;
+            String content = text(message.get("content")).strip();
+            if (content.isEmpty()) continue;
+            int position = wrapped.indexOf("\n"+content+"\n",offset);
+            if (position<0) continue;
+            if (!normalized.substring(offset,position).isBlank()) segments.add(map("start",base+offset,"end",base+position,"created_at",timestamp));
+            offset = position+content.length();
+            timestamp = created;
+            segments.add(map("start",base+position,"end",base+offset,"created_at",timestamp));
+            copies.add(message.get("id"));
+        }
+        if (segments.isEmpty()) return List.of();
+        if (!normalized.substring(offset).isBlank()) segments.add(map("start",base+offset,"end",base+normalized.length(),"created_at",timestamp));
+        return segments;
     }
     void syncSessions(String deviceId, Object value) {
         for (Object item : list(value,100)) {

@@ -89,6 +89,7 @@ input::placeholder, textarea::placeholder { color: #a7b19b; }
 .message.user { display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 27px; }
 .message.user .message-body { max-width: 85%; background: #f0f3eb; padding: 11px 18px; border-radius: 15px 15px 4px 15px; white-space: pre-wrap; }
 .message.assistant .message-body { color: #46533c; }
+.message.assistant .message-part + .message-part { margin-top: 30px; }
 .message.assistant .message-body h1, .message.assistant .message-body h2, .message.assistant .message-body h3, .message.assistant .message-body h4, .message.assistant .message-body h5, .message.assistant .message-body h6 { color: #394a31; font-weight: 600; line-height: 1.45; margin: 18px 0 8px; }
 .message.assistant .message-body h1 { font-size: 20px; }
 .message.assistant .message-body h2 { font-size: 18px; }
