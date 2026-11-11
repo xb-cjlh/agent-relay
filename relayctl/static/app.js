@@ -379,9 +379,10 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
   tokens[index].attrSet('rel','noopener noreferrer');
   return renderer.renderToken(tokens,index,options);
 };
-markdown.renderer.rules.fence = (tokens, index) => {
+markdown.renderer.rules.fence = (tokens, index, options, env) => {
   const token = tokens[index];
   const language = token.info.trim().split(/\s+/)[0];
+  if (language.toLowerCase() === 'mermaid') { const diagram = diagramFence(token,env); if (diagram) return diagram; }
   return `<div class="code-block"><div class="code-heading"><span>${esc(language)}</span><button type="button" data-copy-code>复制</button></div><pre><code>${esc(token.content)}</code></pre></div>`;
 };
 markdown.renderer.rules.table_open = () => '<div class="markdown-table-wrap" tabindex="0" role="region" aria-label="表格"><table class="markdown-table">';
@@ -395,7 +396,7 @@ for (const tag of ['th_open','td_open']) markdown.renderer.rules[tag] = (tokens,
   }
   return renderer.renderToken(tokens,index,options);
 };
-function richText(text, fileContext) { return markdown.render(String(text),{fileContext}); }
+function richText(text, fileContext) { const source = String(text); return markdown.render(source,{fileContext,source}); }
 
 function renderMessages() {
   const container = $('messages'), agent = state.agents.find(a => a.id === selected);
@@ -434,6 +435,7 @@ function renderMessages() {
   }
   for (const node of existing.values()) node.remove();
   loadImages(container);
+  renderDiagrams(container);
   $('thread-empty').hidden = visible.length > 0;
 }
 

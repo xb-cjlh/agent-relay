@@ -33,7 +33,7 @@ class InstallationCase(unittest.TestCase):
             return response.read(), response.headers
 
     def test_public_documents_downloads_and_real_installation(self):
-        for path in ['/docs/', '/docs/install.md', '/install-agent.md', '/install.sh', '/docs.js', '/docs.css', '/skills/agent-bridge/SKILL.md']:
+        for path in ['/docs/', '/docs/install.md', '/install-agent.md', '/install.sh', '/docs.js', '/docs.css', '/diagrams.js', '/diagram.html', '/diagram.css', '/diagram-renderer.js', '/vendor/mermaid.min.js', '/skills/agent-bridge/SKILL.md']:
             body, headers = self.request(path)
             self.assertTrue(body, path)
             self.assertIn('no-cache' if path.endswith(('.js','.css')) else 'no-store', headers['Cache-Control'])
@@ -109,7 +109,7 @@ class InstallationCase(unittest.TestCase):
         fixtures.ServerCase.register(self)
         agent = fixtures.ServerCase.create_agent(self)
         fixtures.ServerCase.prompt(self, agent, 'compression fixture ' * 1000)
-        for path, authenticated in [('/vendor/markdown-it.min.js', False), ('/api/state', True)]:
+        for path, authenticated in [('/vendor/markdown-it.min.js', False), ('/vendor/mermaid.min.js', False), ('/api/state', True)]:
             headers = {'Accept-Encoding': 'gzip'}
             if authenticated:
                 headers['Authorization'] = 'Bearer ' + fixtures.TOKEN

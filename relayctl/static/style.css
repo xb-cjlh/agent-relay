@@ -294,3 +294,9 @@ html { -webkit-text-size-adjust: 100%; }
   .message-images img { max-width: 150px; max-height: 180px; }
   dialog { max-height: calc(var(--viewport-height, 100dvh) - 24px); }
 }
+
+.mermaid-view { background: #fff; min-width: 0; }
+.mermaid-status { margin: 0; padding: 12px; color: #92998b; font-size: 12px; }
+.mermaid-frame { display: block; width: 100%; min-height: 100px; border: 0; }
+.mermaid-source { border-top: 1px solid #e9eddf; }
+.mermaid-source summary { padding: 8px 12px; cursor: pointer; font-size: 11px; color: #7b806e; }

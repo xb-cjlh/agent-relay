@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 final class PublicContent {
-    private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/file-cache.js","/file-preview.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
+    private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/diagrams.js","/diagram-renderer.js","/diagram.css","/vendor/mermaid.min.js","/file-cache.js","/file-preview.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
     static boolean cacheableAsset(String path) { return CACHEABLE_ASSETS.contains(path); }
     private final Path downloads;
     private final Map<String,String> assetTags = new ConcurrentHashMap<>();
@@ -25,6 +25,9 @@ final class PublicContent {
         String file=Map.ofEntries(
             Map.entry("/","static/index.html"), Map.entry("/app.js","static/app.js"),
             Map.entry("/account.js","static/account.js"),
+            Map.entry("/diagrams.js","static/diagrams.js"), Map.entry("/diagram.html","static/diagram.html"),
+            Map.entry("/diagram-renderer.js","static/diagram-renderer.js"), Map.entry("/diagram.css","static/diagram.css"),
+            Map.entry("/vendor/mermaid.min.js","static/vendor/mermaid.min.js"), Map.entry("/vendor/mermaid.LICENSE","static/vendor/mermaid.LICENSE"),
             Map.entry("/file-preview.js","static/file-preview.js"),
             Map.entry("/file-cache.js","static/file-cache.js"),
             Map.entry("/image-upload.js","static/image-upload.js"),

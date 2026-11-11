@@ -1,0 +1,5 @@
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+html { margin: 0; padding: 0; background: #fff; }
+body { margin: 0; padding: 12px; overflow: auto; }
+#diagram { width: max-content; min-width: 100%; }
+#diagram > svg { display: block; max-width: none; }
