@@ -195,12 +195,22 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 	}
 	_, codexErr := exec.LookPath("codex")
 	_, claudeErr := exec.LookPath("claude")
+	claudeTitle := false
+	if claudeErr == nil {
+		probe, done := context.WithTimeout(ctx, 2*time.Second)
+		if help, err := exec.CommandContext(probe, "claude", "--help").Output(); err == nil {
+			claudeTitle = strings.Contains(string(help), "--input-format")
+		}
+		done()
+	}
 	scope := "user"
 	if virtual {
 		scope = "roots"
 	}
+	// Folder browsing is a small read-only control task, independent of model turns.
 	caps := M{"codex": codexErr == nil, "claude": claudeErr == nil, "writable": writable, "discovery_scope": scope, "access_scope": "user", "home": home, "relay_version": Version, "image_input": true, "codex_permissions": true, "claude_permissions": true, "unlimited_tasks": true, "conditional_files": true, "direct_file_upload": true, "session_titles": true, "codex_steering": true}
 	discoveryRoots := roots
+	caps["directory_browser"] = true
 	// Legacy roots is a compatibility field for old servers, not a user setting.
 	if !virtual {
 		roots = []string{"/"}
@@ -282,6 +292,8 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 					continue
 				}
 				t := newTask(job)
+				a := obj(job["agent"])
+				t.nativeTitle = job["kind"] == "prompt" && a["origin"] == "relay" && str(a["title"]) == "" && (a["kind"] == "codex" || claudeTitle)
 				if yes(job["steer_only"]) {
 					for _, owner := range tasks {
 						if obj(owner.job["agent"])["id"] == obj(job["agent"])["id"] {

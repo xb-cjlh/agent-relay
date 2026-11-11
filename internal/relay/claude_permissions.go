@@ -29,6 +29,8 @@ type claudeApprovals struct {
 	workers     sync.WaitGroup
 	closed      bool
 	result      bool
+	titleDone   chan struct{}
+	titleOnce   sync.Once
 }
 
 func (b *claudeApprovals) write(message M) error {
@@ -55,6 +57,9 @@ func (b *claudeApprovals) consume(line []byte) {
 	switch message["type"] {
 	case "control_response":
 		response := obj(message["response"])
+		if response["request_id"] == "relay_title" {
+			b.titleOnce.Do(func() { close(b.titleDone) })
+		}
 		if response["request_id"] == "relay_initialize" {
 			var err error
 			if response["subtype"] != "success" {
@@ -121,15 +126,33 @@ func (b *claudeApprovals) consume(line []byte) {
 			b.mu.Lock()
 			b.result = true
 			b.mu.Unlock()
-			b.stop() // One Relay job owns one turn, including any pending approvals.
+			if b.task.nativeTitle {
+				go func() {
+					select {
+					case <-b.titleDone:
+					case <-time.After(20 * time.Second):
+					case <-b.ctx.Done():
+					}
+					b.stop()
+				}()
+			} else {
+				b.stop()
+			}
 		}
 	}
 }
 
-func (t *Task) runClaudeApprovals(cwd string) (M, error) {
+func (t *Task) runClaudeApprovals(cwd string, writable bool) (M, error) {
 	ctx, cancel := t.executionContext()
 	defer cancel()
-	args := commandFor(obj(t.job["agent"]), true, "ask")
+	mode := str(obj(t.job["payload"])["permission_mode"])
+	if mode == "" {
+		mode = "device"
+	}
+	args := commandFor(obj(t.job["agent"]), writable, mode)
+	if mode != "ask" {
+		args = append(args, "--input-format", "stream-json")
+	}
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir, cmd.SysProcAttr = cwd, &syscall.SysProcAttr{Setpgid: true}
 	for _, env := range os.Environ() {
@@ -142,7 +165,7 @@ func (t *Task) runClaudeApprovals(cwd string) (M, error) {
 		return nil, err
 	}
 	approvalCtx, stopApprovals := context.WithCancel(ctx)
-	b := &claudeApprovals{task: t, ctx: approvalCtx, cancel: stopApprovals, input: input, initialized: make(chan error, 1), requests: map[string]context.CancelFunc{}}
+	b := &claudeApprovals{task: t, ctx: approvalCtx, cancel: stopApprovals, input: input, initialized: make(chan error, 1), requests: map[string]context.CancelFunc{}, titleDone: make(chan struct{})}
 	cmd.Stdout = &eventWriter{task: t, kind: "claude", line: b.consume}
 	cmd.Stderr = diagnosticWriter{task: t}
 	if err = cmd.Start(); err != nil {
@@ -192,6 +215,11 @@ func (t *Task) runClaudeApprovals(cwd string) (M, error) {
 		return nil, errors.New("任务已超时，没有发送指令")
 	}
 	go func() {
+		if t.nativeTitle {
+			if err := b.write(M{"type": "control_request", "request_id": "relay_title", "request": M{"subtype": "generate_session_title", "description": head(str(obj(t.job["payload"])["prompt"]), 4000), "persist": true}}); err != nil {
+				b.titleOnce.Do(func() { close(b.titleDone) })
+			}
+		}
 		if err := b.write(t.claudeInput()); err != nil {
 			b.stop()
 		}

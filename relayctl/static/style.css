@@ -223,6 +223,26 @@ dialog::backdrop { background: #16201255; backdrop-filter: blur(2px); }
 .setup pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px; background: #f5f8ef; border-radius: 6px; font-size: 10px; line-height: 1.9; }
 .file-input-row { display: flex; gap: 8px; }
 .file-input-row input { flex: 1; }
+.directory-input { display:flex;gap:8px; }
+.directory-input input { flex:1;min-width:0; }
+.directory-input .button { flex:none; }
+.recent-directories { margin-top:14px; }
+.recent-directories p { margin:0 0 6px;font-size:11px;color:var(--muted,#7b8173); }
+#recent-directory-items { display:flex;flex-direction:column;gap:3px;max-height:146px;overflow:auto; }
+.recent-directory,.directory-entry { display:flex;align-items:center;gap:8px;text-align:left;border:0;background:transparent;color:inherit;padding:8px;border-radius:6px;min-width:0;width:100%; }
+.recent-directory:hover,.directory-entry:hover { background:#eff1e9; }
+.recent-directory svg,.directory-entry svg { width:16px;height:16px;flex:none; }
+.recent-directory span,.directory-entry span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.recent-directory span { display:flex;flex-direction:column; }
+.recent-directory strong { font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis; }
+.recent-directory small { font-size:10px;color:#818a76;overflow:hidden;text-overflow:ellipsis; }
+.directory-browser { border:1px solid #dce1d2;border-radius:8px;margin-top:12px;padding:10px;min-width:0; }
+.directory-browser-toolbar { display:flex;gap:6px;align-items:center; }
+.directory-browser-toolbar .icon-button { margin-left:auto; }
+.directory-current { font-size:11px;overflow-wrap:anywhere;margin:10px 0;color:#6f785f; }
+.directory-entries { max-height:220px;overflow:auto; }
+#directory-status,#directory-help { font-size:11px;color:#7d8672;overflow-wrap:anywhere; }
+#choose-directory { margin-top:8px;width:100%; }
 #file-form small { color: #a7b794; font-size: 10px; display: block; margin: 9px 0 19px; }
 .file-entry { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-top: 1px solid #edf2e4; }
 .file-entry > div { min-width: 0; flex: 1; }

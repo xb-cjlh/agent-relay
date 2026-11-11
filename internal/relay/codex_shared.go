@@ -372,7 +372,27 @@ func (t *Task) continueCodex(ctx context.Context, rpc *codexRPC, sid, cwd string
 		t.codexPath, t.codexTurn = "", ""
 		t.mu.Unlock()
 	}()
+	titleDone := make(chan struct{})
+	titleCtx, stopTitle := context.WithCancel(ctx)
+	defer stopTitle()
+	if t.nativeTitle {
+		go func() {
+			defer close(titleDone)
+			if naming, err := dialCodexPath(titleCtx, rpc.path); err == nil {
+				defer naming.close()
+				t.nameCodexSession(titleCtx, naming, sid, cwd)
+			}
+		}()
+	} else {
+		close(titleDone)
+	}
 	result, err = t.followCodexTurn(ctx, rpc, sid, turnID)
+	t.mu.Lock()
+	t.codexPath, t.codexTurn = "", ""
+	t.mu.Unlock()
+	if err != nil || result["status"] != "succeeded" {
+		stopTitle()
+	}
 	if ctx.Err() != nil {
 		// Interrupt only the exact turn created by this job, and keep the shared daemon alive.
 		cleanup, done := context.WithTimeout(context.Background(), 4*time.Second)
@@ -388,6 +408,12 @@ func (t *Task) continueCodex(ctx context.Context, rpc *codexRPC, sid, cwd string
 			return M{"status": "cancelled"}, true, nil
 		}
 		return nil, true, errors.New("执行超过任务时间限制，已请求停止本轮")
+	}
+	// The original turn has ended. Cancelling optional title generation must not
+	// interrupt it again or report an unconfirmed stop for a completed task.
+	select {
+	case <-titleDone:
+	case <-ctx.Done():
 	}
 	return result, true, err
 }

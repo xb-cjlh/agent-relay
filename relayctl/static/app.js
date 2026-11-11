@@ -43,6 +43,7 @@ let toastTimer;
 let sessionRows = [], sessionCursor = null, sessionThrough = null, sessionHasMore = false;
 let sessionLoading = true, sessionMoreLoading = false, sessionError = false, sessionRevision = 0;
 let refreshRequest = 0, refreshPromise = null, searchTimer;
+let recentDirectoryRequest = 0, directoryRequest = 0, directoryJob = '', directoryListing = null;
 const drafts = new Map();
 
 function showScreen(id) {
@@ -544,10 +545,77 @@ function newSession() {
   if (!state.devices.length) { $('devices-dialog').showModal(); return; }
   updateOptions(); $('agent-device').value = currentDevice(); suggestDirectory(); $('agent-dialog').showModal();
 }
-function suggestDirectory() {
+async function suggestDirectory() {
+  cancelDirectoryBrowse(); $('directory-browser').hidden = true;
+  const request = ++recentDirectoryRequest, account = generation;
   const device = state.devices.find(d => d.id === $('agent-device').value);
   const directory = sessionOrganization === 'directory' ? directoryScope() : null;
-  if (device) { $('agent-cwd').value = (directory?.device_id === device.id ? directory.cwd : '') || device.capabilities.home || device.roots[0] || ''; $('agent-kind').value = device.capabilities.codex ? 'codex' : 'claude'; }
+  const current = state.agents.find(a => a.id === selected && a.device_id === device?.id);
+  $('recent-agent-directories').hidden = true;
+  if (!device) return;
+  $('agent-cwd').value = (directory?.device_id === device.id ? directory.cwd : '') || current?.cwd || device.capabilities.home || device.roots[0] || '';
+  $('agent-kind').value = device.capabilities.codex ? 'codex' : 'claude';
+  $('browse-agent-directory').disabled = !device.online || !device.capabilities.directory_browser;
+  $('directory-help').textContent = !device.online ? '设备离线，可选择最近目录或直接输入路径。' : !device.capabilities.directory_browser ? '升级目标设备 CLI 至 0.6.8 后可浏览文件夹，也可直接输入路径。' : '';
+  try {
+    const reply = await api('directories?' + new URLSearchParams({device:device.id}));
+    if (request !== recentDirectoryRequest || generation !== account) return;
+    $('recent-directory-items').innerHTML = reply.directories.slice(0,8).map(entry => {
+      const path = entry.cwd, name = path.replace(/\/$/,'').split('/').pop() || '/';
+      return `<button type="button" class="recent-directory" data-recent-directory="${esc(path)}" title="${esc(path)}">${icon('folder')}<span><strong>${esc(name)}</strong><small>${esc(path)}</small></span></button>`;
+    }).join('');
+    $('recent-agent-directories').hidden = !reply.directories.length;
+  } catch(error) {
+    if (request === recentDirectoryRequest && generation === account) $('directory-help').textContent = '最近目录暂时无法加载，可直接输入路径。';
+  }
+}
+function cancelDirectoryBrowse() {
+  directoryRequest++;
+  const id = directoryJob; directoryJob = '';
+  if (id && signedIn) api(`jobs/${encodeURIComponent(id)}/cancel`,{}).catch(() => {});
+}
+async function browseDirectory(path,more=false) {
+  cancelDirectoryBrowse();
+  const request = directoryRequest, account = generation, device = $('agent-device').value;
+  $('directory-browser').hidden = false;
+  $('directory-status').textContent = '正在读取目录…';
+  $('choose-directory').disabled = true; $('directory-more').hidden = true;
+  if (!more) { directoryListing = null; $('directory-entries').replaceChildren(); $('directory-current').textContent = path; }
+  const active = () => request === directoryRequest && account === generation && $('agent-dialog').open;
+  let id;
+  try {
+    const job = await api('jobs',{kind:'directory_list',device,path,after:more ? directoryListing?.next_cursor || '' : ''});
+    id = job.id;
+    if (!active()) { api(`jobs/${encodeURIComponent(id)}/cancel`,{}).catch(() => {}); return; }
+    directoryJob = id;
+    const deadline = Date.now() + 20000;
+    let result = job;
+    while (!terminal.has(result.status)) {
+      await new Promise(resolve => setTimeout(resolve,350));
+      if (!active()) return;
+      if (Date.now() > deadline) throw new Error('读取目录超时，请确认设备在线后重试。');
+      result = await api(`jobs/${encodeURIComponent(id)}`);
+    }
+    if (!active()) return;
+    directoryJob = '';
+    if (result.status !== 'succeeded') throw new Error(result.error || '无法读取此目录');
+    directoryListing = JSON.parse(result.output);
+    $('directory-current').textContent = directoryListing.path;
+    $('directory-parent').disabled = directoryListing.parent === directoryListing.path;
+    const rows = directoryListing.entries.map(name => {
+      const child = directoryListing.path.replace(/\/$/,'') + '/' + name;
+      return `<button type="button" class="directory-entry" data-directory-path="${esc(child)}" title="${esc(child)}">${icon('folder')}<span>${esc(name)}</span>${icon('right')}</button>`;
+    }).join('');
+    $('directory-entries').insertAdjacentHTML('beforeend',rows);
+    $('directory-status').textContent = !$('directory-entries').children.length ? '此目录没有子文件夹，可直接使用。' : '';
+    $('directory-more').hidden = !directoryListing.next_cursor;
+    $('choose-directory').disabled = false;
+  } catch(error) {
+    if (active()) {
+      if (id) api(`jobs/${encodeURIComponent(id)}/cancel`,{}).catch(() => {});
+      directoryJob = ''; $('directory-status').textContent = error.message;
+    }
+  }
 }
 async function submit(form, action) {
   const button = form.querySelector('button[type=submit]'); button.disabled = true;
@@ -581,6 +649,18 @@ $('new-agent').addEventListener('click',newSession); $('empty-new-agent').addEve
 $('devices-button').addEventListener('click',() => { toggleSidebar(false); $('devices-dialog').showModal(); });
 $('files-button').addEventListener('click',() => { $('file-device').value = currentDevice(); toggleSidebar(false); $('files-dialog').showModal(); });
 $('agent-device').addEventListener('change',suggestDirectory);
+$('browse-agent-directory').addEventListener('click',() => browseDirectory($('agent-cwd').value.trim() || state.devices.find(d => d.id === $('agent-device').value)?.capabilities.home || '/'));
+$('recent-directory-items').addEventListener('click',event => {
+  const button = event.target.closest('[data-recent-directory]');
+  if (button) { cancelDirectoryBrowse(); $('directory-browser').hidden = true; $('agent-cwd').value = button.dataset.recentDirectory; }
+});
+$('directory-entries').addEventListener('click',event => { const button = event.target.closest('[data-directory-path]'); if (button) browseDirectory(button.dataset.directoryPath); });
+$('directory-parent').addEventListener('click',() => { if (directoryListing) browseDirectory(directoryListing.parent); });
+$('directory-home').addEventListener('click',() => browseDirectory(state.devices.find(d => d.id === $('agent-device').value)?.capabilities.home || '/'));
+$('directory-more').addEventListener('click',() => { if (directoryListing) browseDirectory(directoryListing.path,true); });
+$('choose-directory').addEventListener('click',() => { if (directoryListing) { $('agent-cwd').value = directoryListing.path; cancelDirectoryBrowse(); $('directory-browser').hidden = true; } });
+$('close-directory-browser').addEventListener('click',() => { cancelDirectoryBrowse(); $('directory-browser').hidden = true; });
+$('agent-dialog').addEventListener('close',() => { recentDirectoryRequest++; cancelDirectoryBrowse(); });
 $('agent-form').addEventListener('submit',e => {
   e.preventDefault();
   submit(e.currentTarget,async () => {

@@ -220,6 +220,11 @@ final class Store {
         return rows("SELECT device_id,MIN(cwd) cwd,COUNT(*) session_count,MAX(activity) last_activity FROM ("+SESSION_QUERY+") sessions"+scope.filter()+
             " GROUP BY device_id,BINARY cwd ORDER BY last_activity DESC,device_id,BINARY cwd",scope.args().toArray());
     }
+    Map<String,Object> recentDirectories(String ref) {
+        var d=device(required(map("device",ref),"device"));
+        var entries=sessionDirectories(text(d.get("id")),"");
+        return map("directories",entries.subList(0,Math.min(20,entries.size())));
+    }
     private Map<String,Object> sessionPage(String device,String query,String before,String through,List<Map<String,Object>> devices,String directoryDevice,String cwd) {
         var scope=sessionScope(device,query,directoryDevice,cwd);
         String filter=scope.filter();List<Object> args=scope.args();
@@ -326,7 +331,8 @@ final class Store {
             var payload=object(decode(j.get("payload")));
             payloads.put(id,payload);
             relayMessages.add(map("id",id+":user","role","user","content",payload.get("prompt"),"images",payload.getOrDefault("images",List.of()),"created_at",created,"job_id",id,"status",j.get("status"),"error",j.get("error")));
-            relayMessages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"segments",assistantSegments(j,messages,assistantCopies,current),"diagnostics",j.get("diagnostics"),"created_at",created+0.000001,"job_id",id,"status",j.get("status"),"error",j.get("error")));
+            if(truth(payload.get("steered")) && text(j.get("output")).isEmpty())suppressed.add(id+":assistant");
+            else relayMessages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"segments",assistantSegments(j,messages,assistantCopies,current),"diagnostics",j.get("diagnostics"),"created_at",created+0.000001,"job_id",id,"status",j.get("status"),"error",j.get("error")));
             if (!TERMINAL.contains(j.get("status"))) active.add(map("id",id,"status",j.get("status")));
         }
         // Native sync and task streaming can arrive at different times. Overlapping
@@ -488,6 +494,12 @@ final class Store {
                 payload.put("permission_mode",mode);
             }
             if(!attachments.isEmpty())payload.put("images",attachments);
+        } else if (kind.equals("directory_list")) {
+            var d=device(required(body,"device"));
+            if(!truth(object(decode(d.get("capabilities"))).get("directory_browser")))throw new ApiException(409,"请升级目标设备 Relay CLI 至 0.6.8 并重启，以浏览目录");
+            deviceId=text(d.get("id"));
+            payload=map("path",required(body,"path"),"after",text(body.getOrDefault("after","")));
+            if(text(payload.get("after")).length()>1024)throw new ApiException("目录分页参数无效");
         } else if (kind.equals("file_read")) {
             var d=device(required(body,"device"));
             deviceId=text(d.get("id")); payload=map("path",required(body,"path"));
@@ -588,14 +600,14 @@ final class Store {
                 }
                 if(claimedAgents.contains(agentId))continue;
                 if (busy.contains(agentId) || truth(a.get("external_busy"))) {
-                    if(!"prompt".equals(j.get("kind")) || !"codex".equals(a.get("kind")) || text(a.get("session_id")).isBlank())continue;
+                    if(!"prompt".equals(j.get("kind")) || !"codex".equals(a.get("kind")) || a.get("session_id")==null || text(a.get("session_id")).isBlank())continue;
                     var owners=running.stream().filter(job->agentId.equals(job.get("agent_id"))).toList();
                     if(owners.isEmpty() && !codexSteering)continue;
                     if(!owners.isEmpty() && (owners.size()!=1 || !"running".equals(owners.get(0).get("status")) || active.stream().map(Values::object).noneMatch(item->owners.get(0).get("id").equals(item.get("id")) && truth(item.get("steerable")))))continue;
                     steer=true;
                 }
             }
-            if(steer && steerClaims<steerSlots)steerClaims++;
+            if((steer || "directory_list".equals(j.get("kind"))) && steerClaims<steerSlots)steerClaims++;
             else if(normalClaims<slots)normalClaims++;
             else continue;
             claimedAgents.add(agentId);
@@ -615,6 +627,12 @@ final class Store {
         if (j.get("status").equals("cancelling")) status="cancelled";
         String sid = body.get("session_id")==null ? null : sessionId(body.get("session_id"));
         String output = tail(text(body.getOrDefault("output","")),MAX_OUTPUT);
+        if(status.equals("succeeded") && j.get("kind").equals("directory_list")) {
+            var directory=object(body.get("directory"));
+            required(directory,"path");required(directory,"parent");list(directory.get("entries"),200);
+            output=encode(directory);
+            if(output.length()>MAX_OUTPUT)throw new ApiException("目录列表过大");
+        }
         Object error = body.get("error"); if (error!=null) error = head(text(error),4000);
         String artifactId = null;
         if (status.equals("succeeded") && j.get("kind").equals("file_read")) {
@@ -623,6 +641,10 @@ final class Store {
         if (j.get("agent_id")!=null) {
             if (sid!=null) update("UPDATE agents SET session_id=? WHERE id=?",sid,j.get("agent_id"));
             if(!truth(body.get("steered")) && !truth(body.get("steering")))update("UPDATE agents SET external_busy=0 WHERE id=?",j.get("agent_id"));
+        }
+        if(truth(body.get("steered"))) {
+            var payload=object(decode(j.get("payload")));payload.put("steered",true);
+            update("UPDATE jobs SET payload=? WHERE id=?",encode(payload),jobId);
         }
         update("UPDATE jobs SET status=?,output=?,diagnostics=?,error=?,finished_at=?,artifact_id=? WHERE id=?",status,output,tail(text(body.getOrDefault("diagnostics","")),8000),error,now(),artifactId,jobId);
         return job(jobId);

@@ -54,6 +54,8 @@ class CodexSteeringCase(unittest.TestCase):
         messages = self.client.request('GET', '/api/agents/' + agent['id'] + '/messages')['messages']
         self.assertEqual([m['content'] for m in messages if m['role']=='user'], ['original task', 'additional instruction'])
         self.assertFalse(any(m['content'] for m in messages if m['role']=='assistant'))
+        self.assertFalse(any(m['id']==extra['id']+':assistant' for m in messages))
+        self.assertIn(extra['id']+':assistant',self.client.request('GET','/api/agents/'+agent['id']+'/messages')['suppressed_message_ids'])
 
     def test_failed_delivery_does_not_mark_the_native_turn_finished(self):
         device, session, agent = self.prepare()

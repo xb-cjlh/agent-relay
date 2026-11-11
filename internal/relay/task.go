@@ -84,6 +84,7 @@ type Task struct {
 	imageDir                             string
 	codexPath, codexTurn                 string
 	codexOverride                        string
+	nativeTitle                          bool
 }
 
 func newTask(job M) *Task {
@@ -243,6 +244,8 @@ func (t *Task) run(roots []string, writable bool) {
 		result = M{"status": "cancelled"}
 	} else if t.job["kind"] == "file_read" {
 		result, err = t.readFile(roots)
+	} else if t.job["kind"] == "directory_list" {
+		result, err = t.listDirectory()
 	} else {
 		result, err = t.runAgent(roots, writable)
 	}
@@ -340,8 +343,8 @@ func (t *Task) runAgent(roots []string, writable bool) (M, error) {
 		}
 		return nil, err
 	}
-	if agent["kind"] == "claude" && mode == "ask" {
-		return t.runClaudeApprovals(cwd)
+	if agent["kind"] == "claude" && (mode == "ask" || t.nativeTitle) {
+		return t.runClaudeApprovals(cwd, writable)
 	}
 	if result, handled, err := t.trySharedCodex(cwd, writable); handled {
 		return result, err
