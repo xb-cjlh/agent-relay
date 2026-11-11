@@ -83,7 +83,6 @@ final class OssImages {
         request.setExpiration(new Date(expires));
         ResponseHeaderOverrides response=new ResponseHeaderOverrides();
         response.setCacheControl("private, max-age=300");
-        response.setContentType("application/octet-stream");
         response.setContentDisposition("attachment; filename*=UTF-8''"+java.net.URLEncoder.encode(name,java.nio.charset.StandardCharsets.UTF_8).replace("+","%20"));
         request.setResponseHeaders(response);
         try{return signerClient().generatePresignedUrl(request).toString();}

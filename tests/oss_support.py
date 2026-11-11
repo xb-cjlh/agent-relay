@@ -42,9 +42,10 @@ class OssFixture:
             def get(self):
                 key=self.record();item=fixture.objects.get(key)
                 if item is None:self.error(404,'NoSuchKey');return
+                override=parse_qs(urlsplit(self.path).query)
+                if 'response-content-type' in override:self.error(400,'InvalidRequest');return
                 self.send_response(200);self.cors()
                 for name,value in item['headers'].items():self.send_header(name,value)
-                override=parse_qs(urlsplit(self.path).query)
                 if 'response-content-disposition' in override:self.send_header('Content-Disposition',override['response-content-disposition'][0])
                 if 'response-cache-control' in override:self.send_header('Cache-Control',override['response-cache-control'][0])
                 self.send_header('Content-Length',str(len(item['data'])));self.send_header('ETag','"'+hashlib.md5(item['data']).hexdigest()+'"');self.send_header('Last-Modified',formatdate(usegmt=True));self.end_headers()

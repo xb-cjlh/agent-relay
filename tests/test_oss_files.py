@@ -55,6 +55,7 @@ class OssFilesCase(unittest.TestCase):
         self.assertEqual('oss',grant['storage'])
         query=parse_qs(urlsplit(grant['url']).query)
         self.assertLessEqual(int(query['x-oss-expires'][0]),300)
+        self.assertNotIn('response-content-type',query) # OSS forbids MIME overrides; uploads fix the type.
         self.assertIn('attachment',query['response-content-disposition'][0])
         with urlopen(grant['url']) as response:self.assertEqual(data,response.read())
         output=self.root/'download.md';download(self.client,artifact,output)
