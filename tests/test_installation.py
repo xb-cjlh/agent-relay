@@ -91,7 +91,7 @@ class InstallationCase(unittest.TestCase):
         self.assertEqual(json.loads((self.root/'config/config.json').read_text())['token'],fixtures.TOKEN)
 
     def test_compression_and_revalidated_public_assets_keep_account_data_uncached(self):
-        for path in ['/app.js', '/file-preview.js', '/account.js', '/style.css', '/vendor/markdown-it.min.js', '/favicon.svg']:
+        for path in ['/app.js', '/file-cache.js', '/file-preview.js', '/account.js', '/style.css', '/vendor/markdown-it.min.js', '/favicon.svg']:
             content, headers = self.request(path)
             self.assertIn('public', headers['Cache-Control'])
             self.assertIn('no-cache', headers['Cache-Control'])

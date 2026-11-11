@@ -457,6 +457,13 @@ final class Store {
         } else if (kind.equals("file_read")) {
             var d=device(required(body,"device"));
             deviceId=text(d.get("id")); payload=map("path",required(body,"path"));
+            if (body.containsKey("cached_artifact")) {
+                String cached=required(body,"cached_artifact",64);
+                var file=row("SELECT f.*,j.payload original_payload FROM artifacts f JOIN jobs j ON j.id=f.job_id WHERE f.id=? AND j.device_id=?",cached,deviceId);
+                if (!payload.get("path").equals(object(decode(file.get("original_payload"))).get("path"))) throw new ApiException("缓存不属于此文件路径");
+                if (!Files.isRegularFile(files.resolve(cached))) throw new ApiException(404,"缓存文件已失效");
+                payload.put("cached_artifact",cached); payload.put("if_sha256",file.get("sha256"));
+            }
         }
         else throw new ApiException("未知任务类型");
         String id = id("job"); update("INSERT INTO jobs(id,device_id,agent_id,kind,payload,status,output,created_at) VALUES(?,?,?,?,?,'queued','',?)",id,deviceId,agentId,kind,encode(payload),now());
@@ -564,15 +571,29 @@ final class Store {
         Object error = body.get("error"); if (error!=null) error = head(text(error),4000);
         String artifactId = null;
         if (status.equals("succeeded") && j.get("kind").equals("file_read")) {
-            var file = object(body.get("file")); String name = required(file,"name",255);
-            if (name.contains("/") || name.contains("\\") || name.equals(".") || name.equals("..") || name.chars().anyMatch(c->c<32)) throw new ApiException("文件名无效");
-            byte[] content;
-            try { content = Base64.getDecoder().decode(text(file.get("data"))); } catch (IllegalArgumentException e) { throw new ApiException("文件编码无效"); }
-            if (content.length>MAX_FILE) throw new ApiException(413,"文件超过 16 MiB 限制");
-            String sha = hash(content); if (!secureEquals(sha,text(file.get("sha256")))) throw new ApiException("文件校验失败");
-            artifactId = id("file"); Path target = files.resolve(artifactId);
-            Files.write(target,content,StandardOpenOption.CREATE_NEW); privateFile(target);
-            update("INSERT INTO artifacts VALUES(?,?,?,?,?,?)",artifactId,jobId,name,content.length,sha,now());
+            var file = object(body.get("file"));
+            var payload=object(decode(j.get("payload")));
+            if (truth(file.get("unchanged"))) {
+                String cached=required(payload,"cached_artifact",64);
+                var previous=row("SELECT f.* FROM artifacts f JOIN jobs j ON j.id=f.job_id WHERE f.id=? AND j.device_id=?",cached,deviceId);
+                if (!secureEquals(text(previous.get("sha256")),text(file.get("sha256"))) || !Files.isRegularFile(files.resolve(cached)))
+                    throw new ApiException("文件缓存校验失败");
+                artifactId=cached;
+            } else {
+                String name = required(file,"name",255);
+                if (name.contains("/") || name.contains("\\") || name.equals(".") || name.equals("..") || name.chars().anyMatch(c->c<32)) throw new ApiException("文件名无效");
+                byte[] content;
+                try { content = Base64.getDecoder().decode(text(file.get("data"))); } catch (IllegalArgumentException e) { throw new ApiException("文件编码无效"); }
+                if (content.length>MAX_FILE) throw new ApiException(413,"文件超过 16 MiB 限制");
+                String sha = hash(content); if (!secureEquals(sha,text(file.get("sha256")))) throw new ApiException("文件校验失败");
+                var previous=payload.containsKey("cached_artifact") ? rows("SELECT f.* FROM artifacts f JOIN jobs j ON j.id=f.job_id WHERE f.id=? AND j.device_id=? AND f.sha256=?",payload.get("cached_artifact"),deviceId,sha) : List.<Map<String,Object>>of();
+                if (!previous.isEmpty() && Files.isRegularFile(files.resolve(text(previous.get(0).get("id"))))) artifactId=text(previous.get(0).get("id"));
+                else {
+                    artifactId = id("file"); Path target = files.resolve(artifactId);
+                    Files.write(target,content,StandardOpenOption.CREATE_NEW); privateFile(target);
+                    update("INSERT INTO artifacts VALUES(?,?,?,?,?,?)",artifactId,jobId,name,content.length,sha,now());
+                }
+            }
         }
         if (j.get("agent_id")!=null) {
             if (sid!=null) update("UPDATE agents SET session_id=? WHERE id=?",sid,j.get("agent_id"));

@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 final class PublicContent {
-    private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/file-preview.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
+    private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/file-cache.js","/file-preview.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
     static boolean cacheableAsset(String path) { return CACHEABLE_ASSETS.contains(path); }
     private final Path downloads;
     private final Map<String,String> assetTags = new ConcurrentHashMap<>();
@@ -26,6 +26,7 @@ final class PublicContent {
             Map.entry("/","static/index.html"), Map.entry("/app.js","static/app.js"),
             Map.entry("/account.js","static/account.js"),
             Map.entry("/file-preview.js","static/file-preview.js"),
+            Map.entry("/file-cache.js","static/file-cache.js"),
             Map.entry("/image-upload.js","static/image-upload.js"),
             Map.entry("/vendor/spark-md5.min.js","static/vendor/spark-md5.min.js"),
             Map.entry("/vendor/spark-md5.LICENSE","static/vendor/spark-md5.LICENSE"),

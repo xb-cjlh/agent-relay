@@ -367,6 +367,27 @@ func TestRemoteFilesAllowOtherDirectoriesAndSymlinks(t *testing.T) {
 		}
 	}
 }
+
+func TestConditionalFileReadUsesContentEvenWhenSizeAndTimeMatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data.txt")
+	os.WriteFile(path, []byte("first"), 0600)
+	info, _ := os.Stat(path)
+	task := newTask(M{"kind": "file_read", "payload": M{"path": path, "if_sha256": hash("first")}})
+	result, err := task.readFile(nil)
+	if err != nil || !yes(obj(result["file"])["unchanged"]) || obj(result["file"])["data"] != nil {
+		t.Fatalf("unchanged file uploaded: %v %v", result, err)
+	}
+	os.WriteFile(path, []byte("other"), 0600)
+	os.Chtimes(path, info.ModTime(), info.ModTime())
+	result, err = task.readFile(nil)
+	if err != nil || yes(obj(result["file"])["unchanged"]) || obj(result["file"])["sha256"] != hash("other") || obj(result["file"])["data"] == nil {
+		t.Fatalf("same-size change missed: %v %v", result, err)
+	}
+	os.Remove(path)
+	if _, err = task.readFile(nil); err == nil {
+		t.Fatal("deleted file was treated as unchanged")
+	}
+}
 func TestResumePreservesPermissionsAndSession(t *testing.T) {
 	for _, writable := range []bool{false, true} {
 		cmd := commandFor(M{"kind": "codex", "session_id": "session-1"}, writable)

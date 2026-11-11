@@ -86,6 +86,7 @@ class AccountsCase(unittest.TestCase):
         dev=Client(self.url,da['token']);dev.request('POST','/api/device/poll',{'capacity':4})
         result=dev.request('POST','/api/device/jobs/'+f['id']+'/complete',{'status':'succeeded','file':{'name':'secret','data':base64.b64encode(b'private').decode(),'sha256':hashlib.sha256(b'private').hexdigest()}})
         self.denied(404,b,'GET','/api/files/'+result['artifact_id'])
+        self.denied(404,b,'POST','/api/jobs',{'kind':'file_read','device':db['id'],'path':'secret','cached_artifact':result['artifact_id']})
 
     def test_password_reset_consumes_code_revokes_sessions_and_keys(self):
         email='reset@example.com';self.browser.register(self.mail,email);key=self.key()

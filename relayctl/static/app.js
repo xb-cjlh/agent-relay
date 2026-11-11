@@ -67,9 +67,10 @@ async function api(path, body, raw=false) {
 
 async function logout(localOnly=false) {
   if (!localOnly) await fetch('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json','X-Relay-Request':'1'},body:'{}'}).catch(()=>{});
+  const cacheOwner = currentUser?.id;
   signedIn = false; currentUser = null; generation++; conversationRequest++;
   closeFilePreview(false);
-  clearFilePreviewCache();
+  clearFilePreviewCache(cacheOwner);
   for (const upload of imageUploads) upload.abort();
   for (const key of Object.keys(sessionStorage)) if (key.startsWith('relay-')) sessionStorage.removeItem(key);
   sessionRevision++; refreshRequest++; refreshing = false; sessionRows = []; sessionThrough = sessionCursor = null; sessionHasMore = false; sessionLoading = true; sessionMoreLoading = false; sessionError = false;

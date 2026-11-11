@@ -286,7 +286,11 @@ func (t *Task) readFile(roots []string) (M, error) {
 	if len(data) > MaxFile {
 		return nil, errors.New("文件超过 16 MiB 限制")
 	}
-	return M{"status": "succeeded", "file": M{"name": info.Name(), "data": base64.StdEncoding.EncodeToString(data), "sha256": hashBytes(data)}}, nil
+	sha := hashBytes(data)
+	if sha == str(obj(t.job["payload"])["if_sha256"]) {
+		return M{"status": "succeeded", "file": M{"unchanged": true, "sha256": sha}}, nil
+	}
+	return M{"status": "succeeded", "file": M{"name": info.Name(), "data": base64.StdEncoding.EncodeToString(data), "sha256": sha}}, nil
 }
 func (t *Task) runAgent(roots []string, writable bool) (M, error) {
 	agent := obj(t.job["agent"])
