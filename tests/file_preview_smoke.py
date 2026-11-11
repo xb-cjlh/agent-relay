@@ -1,0 +1,215 @@
+"""Markdown file links through actual Go daemons, without any model requests."""
+import base64
+import json
+import os
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+from urllib.parse import quote
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.devtools import Client, Server, binary
+from test_relay import TOKEN
+from playwright.sync_api import expect, sync_playwright
+
+
+def main():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        server = Server(('127.0.0.1', 0), root / 'data', TOKEN)
+        base = 'http://127.0.0.1:' + str(server.server_port)
+        client = Client(base, TOKEN)
+        daemons = []
+        try:
+            # Both devices expose identical relative filenames under different cwd.
+            # The device and path in each read job must match the clicked session.
+            agents = {}
+            projects = {}
+            for name, kind in [('work', 'codex'), ('home', 'claude')]:
+                project = root / name; (project / 'docs').mkdir(parents=True)
+                (project / 'docs' / 'note 中文.md').write_text('# ' + name + ' 文件\n\n**正文**\n\n[代码](../main.py#L3)\n\n[百分号](../100%25.txt)\n\n[章节](#章节)\n\n## 章节\n\n<script>window.fileInjected=true</script>\n')
+                (project / 'main.py').write_text('first\nsecond\n' + name + ' third\nfourth\n')
+                (project / '100%.txt').write_text(name + ' percent')
+                (project / 'plain.html').write_text('<script>window.fileInjected=true</script>\n<h1>literal HTML</h1>')
+                (project / 'binary.bin').write_bytes(bytes(range(256)))
+                (project / 'large.txt').write_text('Long line\n' * 40000)
+                (project / 'image.png').write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j2ioAAAAASUVORK5CYII='))
+                codex_home = root / (name + '-codex'); codex_home.mkdir()
+                claude_home = root / (name + '-claude'); claude_home.mkdir()
+                env = dict(os.environ, AM_CONFIG_DIR=str(root / (name + '-config')), CODEX_HOME=str(codex_home), CLAUDE_CONFIG_DIR=str(claude_home))
+                daemon = subprocess.Popen([binary(), '--server', base, '--token', TOKEN, 'daemon', 'run', '--virtual-device',
+                    '--name', name, '--root', str(root), '--state-dir', str(root / (name + '-state')), '--interval', '0.1'],
+                    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                daemons.append(daemon)
+                end = time.monotonic() + 20
+                while not (root / (name + '-state') / 'identity.json').exists():
+                    assert time.monotonic() < end, 'daemon registration timed out'
+                    time.sleep(0.1)
+                identity = json.loads((root / (name + '-state') / 'identity.json').read_text())
+                device = Client(base, identity['token'])
+                markdown = '\n\n'.join([
+                    '[说明](docs/note%20%E4%B8%AD%E6%96%87.md)',
+                    '[绝对路径](' + quote(str(project / 'main.py')) + ':3)',
+                    '[文件 URI](file://' + quote(str(project / 'main.py')) + '#L2)',
+                    '[图片](image.png)', '[二进制](binary.bin)', '[大文本](large.txt)',
+                    '[HTML](plain.html)', '[缺失](missing.txt)',
+                    '[网页](https://example.test/docs/readme.md)',
+                    '[恶意](javascript:alert(1))', '[恶意 URI](file://other-host/etc/passwd)',
+                    '[编码协议](javascript%3Aalert(1))'])
+                device.request('POST', '/api/device/poll', {'sessions': [{'kind': kind, 'session_id': name + '-session',
+                    'name': name, 'cwd': str(project), 'updated_at': time.time(), 'busy': False,
+                    'messages': [{'id': name + '-reply', 'role': 'assistant', 'content': markdown, 'created_at': time.time()}]}]})
+                agents[name] = next(a for a in client.request('GET', '/api/state')['agents'] if a['device_id'] == identity['id'])
+                projects[name] = project
+
+            with sync_playwright() as p:
+                for browser_name, engine in [('Chromium', p.chromium), ('WebKit', p.webkit)]:
+                    chrome = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+                    browser = engine.launch(**({'executable_path': str(chrome)} if browser_name == 'Chromium' and chrome.exists() else {}))
+                    context = browser.new_context(accept_downloads=True, viewport={'width': 1440, 'height': 900} if browser_name == 'Chromium' else {'width': 390, 'height': 650}, **({'is_mobile': True, 'has_touch': True} if browser_name == 'WebKit' else {}))
+                    page = context.new_page(); errors = []
+                    page.on('pageerror', lambda error: errors.append(str(error)))
+                    reads = []
+                    page.on('request', lambda request: reads.append(request.post_data_json) if request.method == 'POST' and request.url == base + '/api/jobs' else None)
+                    page.goto(base); server.browser_login(page)
+
+                    def click_link(label):
+                        page.locator('#messages a').filter(has_text=label).evaluate('(el)=>el.click()')
+
+                    print(browser_name + ': testing previews', flush=True)
+                    for name, agent in agents.items():
+                        page.evaluate('id=>selectAgent(id)', agent['id'])
+                        expect(page.locator('#messages a[data-file-link]')).to_have_count(8)
+                        before = len(reads)
+                        page.wait_for_timeout(1100)
+                        assert len(reads) == before, 'file links must not read files before a click'
+                        external = page.locator('#messages a').filter(has_text='网页')
+                        expect(external).to_have_attribute('href', 'https://example.test/docs/readme.md')
+                        expect(external).to_have_attribute('target', '_blank')
+                        click_link('说明')
+                        expect(page.locator('#file-preview-content h1')).to_have_text(name + ' 文件', timeout=15000)
+                        expect(page.locator('#file-preview-content strong')).to_have_text('正文')
+                        assert reads[-1]['device'] == agent['device_id']
+                        assert reads[-1]['path'] == str(projects[name] / 'docs' / 'note 中文.md')
+                        assert all(r['kind'] == 'file_read' for r in reads)
+                        assert not page.evaluate('window.fileInjected || false')
+                        assert page.locator('#file-preview-content script, #file-preview-content iframe').count() == 0
+                        if browser_name == 'Chromium':
+                            assert page.locator('#file-preview').bounding_box()['x'] > page.locator('.conversation').bounding_box()['x']
+                        else:
+                            assert page.locator('#file-preview').bounding_box()['width'] == 390
+                            assert page.locator('.conversation').evaluate('(el)=>el.inert')
+                        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                        with page.expect_download() as info:
+                            page.locator('#download-file-preview').click()
+                        assert info.value.suggested_filename == 'note 中文.md'
+                        assert Path(info.value.path()).read_bytes() == (projects[name] / 'docs' / 'note 中文.md').read_bytes()
+                        # A heading anchor in the preview reuses the same retrieved bytes.
+                        before = len(reads)
+                        page.locator('#file-preview-content a').filter(has_text='章节').click()
+                        assert len(reads) == before
+                        page.locator('#file-preview-content a').filter(has_text='百分号').click()
+                        expect(page.locator('#file-preview-content')).to_contain_text(name + ' percent', timeout=15000)
+                        page.locator('#close-file-preview').click()
+                        click_link('说明')
+                        expect(page.locator('#file-preview-content h1')).to_have_text(name + ' 文件', timeout=15000)
+                        page.locator('#file-preview-content a').filter(has_text='代码').click()
+                        expect(page.locator('#file-preview-content .highlighted')).to_have_text(name + ' third', timeout=15000)
+                        assert reads[-1]['path'] == str(projects[name] / 'main.py')
+                        page.locator('#close-file-preview').click()
+                        expect(page.locator('#file-preview')).to_be_hidden()
+                        assert not page.locator('.conversation').evaluate('(el)=>el.inert')
+                        click_link('文件 URI')
+                        expect(page.locator('.file-source-line.highlighted')).to_have_text('second', timeout=15000)
+                        page.locator('#close-file-preview').click()
+                        click_link('绝对路径')
+                        expect(page.locator('.file-source-line.highlighted')).to_have_text(name + ' third', timeout=15000)
+                        page.locator('#close-file-preview').click()
+
+                    click_link('图片')
+                    expect(page.locator('#file-preview-content img')).not_to_have_js_property('naturalWidth', 0, timeout=15000)
+                    page.locator('#close-file-preview').click()
+                    click_link('二进制')
+                    expect(page.locator('#file-preview-content')).to_contain_text('此格式暂不支持预览', timeout=15000)
+                    with page.expect_download() as info:
+                        page.locator('#download-file-preview').click()
+                    assert Path(info.value.path()).read_bytes() == bytes(range(256))
+                    page.locator('#close-file-preview').click()
+                    click_link('大文本')
+                    expect(page.locator('.file-preview-notice')).to_contain_text('仅预览', timeout=15000)
+                    expect(page.locator('.file-source-line')).to_have_count(5000)
+                    with page.expect_download() as info:
+                        page.locator('#download-file-preview').click()
+                    assert Path(info.value.path()).read_bytes() == (projects['home'] / 'large.txt').read_bytes()
+                    page.locator('#close-file-preview').click()
+                    click_link('HTML')
+                    expect(page.locator('#file-preview-content pre')).to_contain_text('<script>window.fileInjected=true</script>', timeout=15000)
+                    assert not page.evaluate('window.fileInjected || false')
+                    page.locator('#close-file-preview').click()
+                    click_link('缺失')
+                    expect(page.locator('#retry-file-preview')).to_be_visible(timeout=15000)
+                    expect(page.locator('#download-file-preview')).to_be_disabled()
+                    (projects['home'] / 'missing.txt').write_text('created after first attempt')
+                    page.locator('#retry-file-preview').click()
+                    expect(page.locator('#file-preview-content')).to_contain_text('created after first attempt', timeout=15000)
+                    (projects['home'] / 'missing.txt').unlink()
+                    page.evaluate('id=>selectAgent(id)', agents['work']['id'])
+                    expect(page.locator('#file-preview')).to_be_hidden()
+
+                    # A slow old response cannot reopen a preview on another session.
+                    held = []
+                    context.route(base + '/api/files/*', lambda route: held.append(route))
+                    click_link('说明')
+                    end = time.monotonic() + 15
+                    while not held:
+                        assert time.monotonic() < end
+                        page.wait_for_timeout(100)
+                    page.evaluate('id=>selectAgent(id)', agents['home']['id'])
+                    held[0].continue_()
+                    page.wait_for_timeout(300)
+                    expect(page.locator('#file-preview')).to_be_hidden()
+                    context.unroute(base + '/api/files/*')
+
+                    cases = [
+                        ['~/notes/a.md#L7', {'base': '/work'}, '~/notes/a.md', 7],
+                        ['../a%2520b.md', {'base': '/work/docs'}, '/work/a%20b.md', 0],
+                        ['#part', {'base': '/work', 'path': '/work/100%.md'}, '/work/100%.md', 0],
+                    ]
+                    for href, scope, path, line in cases:
+                        parsed = page.evaluate('([href,scope])=>localFileLink(href,scope)', [href, scope])
+                        assert (parsed['path'], parsed['line']) == (path, line)
+                    for href in ['javascript:alert(1)', 'data:text/html,foo', '//other/file', 'file://other/file', 'file:///tmp/a%00b', '%2F%2Fhost/file']:
+                        assert page.evaluate('href=>localFileLink(href,{base:"/work"})', href) is None
+
+                    print(browser_name + ': downloads, errors and source-device checks passed', flush=True)
+                    # Closing a queued request retracts it, even on an offline device.
+                    offline = client.request('POST', '/api/register', {'name': browser_name + '-offline', 'platform': 'test', 'capabilities': {}})
+                    server.database.execute('UPDATE devices SET last_seen=0 WHERE id=?', (offline['id'],))
+                    page.evaluate('refresh()')
+                    page.evaluate("id=>{void openFilePreview({deviceId:id,path:'/offline.txt'},null);}", offline['id'])
+                    expect(page.locator('#file-preview-info')).to_contain_text('设备离线', timeout=15000)
+                    job_id = page.evaluate('filePreview.job.id')
+                    page.locator('#close-file-preview').click()
+                    end = time.monotonic() + 5
+                    while client.request('GET', '/api/jobs/' + job_id)['status'] != 'cancelled':
+                        assert time.monotonic() < end
+                        page.wait_for_timeout(100)
+                    assert not errors, errors
+                    context.close()
+                    browser.close()
+            print('File previews passed: actual Go reads on two devices, Codex/Claude links, relative/nested/absolute/file URI paths, line anchors, verified original downloads, Markdown/text/image/binary/large files, retries, offline cancellation, mobile WebKit and no model requests.')
+        finally:
+            for daemon in daemons:
+                daemon.send_signal(signal.SIGINT)
+            for daemon in daemons:
+                try: daemon.wait(timeout=10)
+                except subprocess.TimeoutExpired: daemon.kill(); daemon.wait()
+                daemon.stderr.close()
+            server.close()
+
+
+if __name__ == '__main__':
+    main()

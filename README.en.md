@@ -4,6 +4,8 @@
 
 Relay brings Codex and Claude Code sessions from all your computers into one workspace. Follow live replies, continue conversations remotely, retrieve files, and let agents on different devices send instructions to each other and collaborate on tasks.
 
+Click a Markdown file link in a reply to retrieve it from the source device, preview Markdown, code, text, or images in a side panel, and download the original file. Mobile devices use a full-screen preview.
+
 Relay is an early, self-hostable version. Hosting your own server gives you control over accounts, conversations, and storage. The `relay.chaojibot.com` address in the examples is an existing hosted instance; replace it with your own domain when self-hosting. See the [self-hosting guide (Chinese)](deploy/README.md) and [contribution guide (Chinese)](CONTRIBUTING.md).
 
 ## Use the hosted service

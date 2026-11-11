@@ -234,6 +234,7 @@ def main():
                 page.locator('#logout').click()
                 expect(page.locator('#login')).to_be_visible()
                 assert not errors, '\n'.join(errors)
+                context.close()
                 browser.close()
             print('Browser passed: device switching, scoped search, remembered sessions/drafts, empty/offline device, dialog defaults, live messages, streaming, create, download and mobile.')
         finally:

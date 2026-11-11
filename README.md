@@ -4,6 +4,8 @@
 
 Relay 让你在一个工作台管理各台电脑上的 Codex 和 Claude Code 会话，查看实时回复、远程续聊和取回文件。不同设备上的 Agent 也能相互发送指令，协作完成任务。
 
+点击回复中的 Markdown 文件链接，即可从来源设备取回，在侧栏预览 Markdown、代码、文本或图片，并下载原文件；手机上使用全屏预览。
+
 这是可自建的早期版本。使用自己的服务端可控制账号、会话及存储；文档中的 `relay.chaojibot.com` 是现有托管实例，自建时换成自己的域名。部署步骤见 [自建指南](deploy/README.md)，贡献方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 直接使用托管版

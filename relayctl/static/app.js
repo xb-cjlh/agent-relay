@@ -68,6 +68,7 @@ async function api(path, body, raw=false) {
 async function logout(localOnly=false) {
   if (!localOnly) await fetch('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json','X-Relay-Request':'1'},body:'{}'}).catch(()=>{});
   signedIn = false; currentUser = null; generation++; conversationRequest++;
+  closeFilePreview(false);
   for (const upload of imageUploads) upload.abort();
   for (const key of Object.keys(sessionStorage)) if (key.startsWith('relay-')) sessionStorage.removeItem(key);
   sessionRevision++; refreshRequest++; refreshing = false; sessionRows = []; sessionThrough = sessionCursor = null; sessionHasMore = false; sessionLoading = true; sessionMoreLoading = false; sessionError = false;
@@ -239,6 +240,7 @@ function renderSessions() {
 }
 
 function selectAgent(id,closeSidebar=true,load=true) {
+  closeFilePreview(false);
   if (selected) { drafts.set(selected, $('prompt').value); sessionStorage.setItem('relay-draft:' + selected, $('prompt').value); }
   selected = id; conversationRequest++; messages = new Map(); activeJobs = []; approvals = []; renderApprovals(); firstMessages = true;
   $('messages').replaceChildren(); $('new-messages').hidden = true; $('load-older').hidden = true;
@@ -361,7 +363,16 @@ $('approval-list').addEventListener('click',async event => {
 
 // HTML stays literal; model output cannot introduce page elements or scripts.
 const markdown = window.markdownit({html:false, breaks:true, linkify:true}).disable('image');
+const validateMarkdownLink = markdown.validateLink.bind(markdown);
+markdown.validateLink = href => validateMarkdownLink(href) || !!localFileLink(href);
 markdown.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
+  const file = localFileLink(tokens[index].attrGet('href'),env.fileContext);
+  if (file && env.fileContext?.deviceId) {
+    tokens[index].attrSet('href','#file-preview');
+    tokens[index].attrSet('data-file-link',JSON.stringify(file));
+    tokens[index].attrSet('title',file.path);
+    return renderer.renderToken(tokens,index,options);
+  }
   tokens[index].attrSet('target','_blank');
   tokens[index].attrSet('rel','noopener noreferrer');
   return renderer.renderToken(tokens,index,options);
@@ -382,7 +393,7 @@ for (const tag of ['th_open','td_open']) markdown.renderer.rules[tag] = (tokens,
   }
   return renderer.renderToken(tokens,index,options);
 };
-function richText(text) { return markdown.render(String(text)); }
+function richText(text, fileContext) { return markdown.render(String(text),{fileContext}); }
 
 function renderMessages() {
   const container = $('messages'), agent = state.agents.find(a => a.id === selected);
@@ -393,7 +404,7 @@ function renderMessages() {
   for (const message of visible) {
     let node = existing.get(message.id);
     if (!node) { node = document.createElement('article'); node.dataset.id = message.id; }
-    const signature = JSON.stringify([message,agent?.kind]);
+    const signature = JSON.stringify([message,agent?.kind,agent?.device_id,agent?.cwd]);
     if (node.dataset.signature !== signature) {
       node.className = 'message ' + message.role;
       const writerConflict = message.role === 'assistant' && message.status === 'failed' && agent?.kind === 'codex' && [message.content,message.diagnostics].some(value=>value?.includes('already has an active writer'));
@@ -403,7 +414,7 @@ function renderMessages() {
       const body = parts.map(part => {
         let text;
         if (writerConflict) text = `<p class="session-conflict">本次指令未执行：原会话仍由本机 Codex 持有。</p>${message.content ? `<details class="execution-details"><summary>技术详情</summary><pre>${esc(message.content)}</pre></details>` : ''}`;
-        else if (part.content) text = message.role === 'user' ? esc(part.content) : richText(part.content);
+        else if (part.content) text = message.role === 'user' ? esc(part.content) : richText(part.content,{deviceId:agent?.device_id,base:agent?.cwd});
         else if (['running','cancelling'].includes(message.status)) text = `<span class="typing">${message.status === 'cancelling' ? '正在停止…' : '正在回复…'}</span>`;
         else text = message.status === 'failed' ? '' : message.status === 'cancelled' ? '已停止。' : '本轮已结束，没有文本输出。';
         if (message.role === 'user' && message.images?.length) text += `<div class="message-images">${message.images.map(img => `<a href="/api/images/${encodeURIComponent(img.id)}" data-view-image="${esc(img.id)}" target="_blank" rel="noopener noreferrer"><img data-image-id="${esc(img.id)}" alt="${esc(img.name)}" loading="lazy" crossorigin="anonymous" referrerpolicy="no-referrer"></a>`).join('')}</div>`;
@@ -452,13 +463,8 @@ function renderFiles() {
 async function downloadFile(id) {
   const file = state.artifacts.find(f => f.id === id);
   if (!file) throw new Error('文件尚未同步，请稍后重试');
-  const response = await api('files/' + id, undefined, true), data = await response.arrayBuffer();
-  if (!crypto.subtle) throw new Error('浏览器文件校验需要 HTTPS 或 localhost，也可使用 CLI 下载');
-  const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256',data))].map(x => x.toString(16).padStart(2,'0')).join('');
-  if (hash !== file.sha256) throw new Error('文件校验失败');
-  const url = URL.createObjectURL(new Blob([data],{type:'application/octet-stream'}));
-  const anchor = document.createElement('a'); anchor.href = url; anchor.download = file.name; anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url),1000);
+  const account = generation, artifact = await readArtifact(id,file);
+  if (account === generation && signedIn) saveArtifact(artifact);
 }
 
 function toggleSidebar(open) { $('sidebar').classList.toggle('open',open); $('sidebar-backdrop').hidden = !open; }

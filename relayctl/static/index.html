@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Relay · 会话</title><link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/style.css"><script src="/vendor/spark-md5.min.js" defer></script><script src="/image-upload.js" defer></script><script src="/vendor/markdown-it.min.js" defer></script><script src="/app.js" defer></script><script src="/account.js" defer></script>
+<link rel="stylesheet" href="/style.css"><script src="/vendor/spark-md5.min.js" defer></script><script src="/image-upload.js" defer></script><script src="/vendor/markdown-it.min.js" defer></script><script src="/app.js" defer></script><script src="/file-preview.js" defer></script><script src="/account.js" defer></script>
 </head>
 <body>
 <div id="session-loading" class="session-loading" role="status"><img src="/favicon.svg" alt="Relay" width="36" height="36"><p id="session-loading-message">正在加载页面…</p><button id="retry-session" type="button" class="button secondary" hidden>重试</button></div>
@@ -42,7 +42,12 @@
 <button id="new-messages" class="new-messages button secondary" hidden><span data-icon="down"></span>有新消息</button>
 <div class="composer-wrap"><div id="approval-list" class="approval-list" aria-label="待审批操作" aria-live="polite" hidden></div><form id="send-form" class="composer"><label class="sr-only" for="prompt">消息</label><div id="attachment-list" class="attachment-list" hidden></div><textarea id="prompt" rows="2" placeholder="发送消息…" maxlength="32000"></textarea>
 <div class="composer-actions"><div><button id="attach-image" class="icon-button" type="button" aria-label="添加图片" title="添加图片"><span data-icon="image"></span></button><input id="image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif" multiple hidden><label class="sr-only" for="permission-mode">Agent 执行权限（从下一条消息生效）</label><select id="permission-mode" class="permission-select" hidden><option value="device">设备默认</option><option value="ask">按需审批</option><option value="full">完全访问</option></select><span id="composer-hint">Enter 发送，Shift + Enter 换行</span></div><div><button id="stop-generation" type="button" class="stop-button" hidden><span data-icon="stop"></span>停止</button><button id="send-button" type="submit" class="send-button" aria-label="发送消息" title="发送消息"><span data-icon="up"></span></button></div></div></form><p id="permission-note" class="permission-note" hidden></p><p id="queue-hint" class="queue-hint"></p></div>
-</div></main></div>
+</div></main>
+<aside id="file-preview" class="file-preview" aria-label="文件预览" tabindex="-1" hidden>
+<div class="file-preview-header"><div><h2 id="file-preview-name">文件预览</h2><p id="file-preview-source"></p></div><button id="close-file-preview" class="icon-button" type="button" aria-label="关闭文件预览"><span data-icon="close"></span></button></div>
+<div class="file-preview-toolbar"><span id="file-preview-info" role="status"></span><button id="retry-file-preview" type="button" class="button secondary" hidden>重试</button><button id="download-file-preview" type="button" class="button secondary" disabled>下载原文件</button></div>
+<div id="file-preview-content" class="file-preview-content" tabindex="0"></div>
+</aside></div>
 <dialog id="agent-dialog"><form id="agent-form" class="dialog-content"><div class="dialog-heading"><h2>新会话</h2><button type="button" class="icon-button" data-close="agent-dialog" aria-label="关闭"><span data-icon="close"></span></button></div>
 <label for="agent-device">设备</label><select id="agent-device" required></select><label for="agent-kind">Agent</label><select id="agent-kind"><option value="codex">Codex</option><option value="claude">Claude Code</option></select>
 <label for="agent-cwd">工作目录</label><input id="agent-cwd" required placeholder="目标设备上的绝对路径"><div class="dialog-actions"><button class="button primary" type="submit">创建会话</button></div></form></dialog>
