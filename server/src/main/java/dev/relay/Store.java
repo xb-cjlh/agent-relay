@@ -564,27 +564,46 @@ final class Store {
         }
         var cancel = new ArrayList<Object>(); for (var j : rows("SELECT id FROM jobs WHERE device_id=? AND status='cancelling'",deviceId)) cancel.add(j.get("id"));
         int capacity = integer(body.getOrDefault("capacity",0),0,8,"capacity");
-        var running = rows("SELECT id,agent_id FROM jobs WHERE device_id=? AND status IN ('running','cancelling')",deviceId);
-        int slots = Math.min(capacity, Math.max(0,8-running.size())); Set<Object> busy = new HashSet<>(); for (var j : running) busy.add(j.get("agent_id"));
+        var running = rows("SELECT id,agent_id,status FROM jobs WHERE device_id=? AND status IN ('running','cancelling')",deviceId);
+        int available=Math.max(0,8-running.size()),slots=Math.min(capacity,available);
+        int steerSlots=integer(body.getOrDefault("steer_capacity",0),0,4,"steer_capacity");
+        int normalClaims=0,steerClaims=0;
+        Set<Object> busy = new HashSet<>(); for (var j : running) busy.add(j.get("agent_id"));
+        boolean codexSteering=truth(object(decode(device(deviceId).get("capabilities"))).get("codex_steering"));
+        Set<Object> claimedAgents=new HashSet<>();
         var claimed = new ArrayList<Object>();
         for (var j : rows("SELECT * FROM jobs WHERE device_id=? AND status='queued' ORDER BY created_at,id FOR UPDATE",deviceId)) {
-            if (claimed.size()>=slots) break;
+            if (claimed.size()>=Math.min(available,slots+steerSlots)) break;
             if("prompt".equals(j.get("kind"))&&number(object(decode(j.get("payload"))).getOrDefault("timeout",0))==0&&!truth(object(decode(device(deviceId).get("capabilities"))).get("unlimited_tasks"))) {
                 update("UPDATE jobs SET status='failed',error=?,finished_at=? WHERE id=?","目标设备不支持无固定时限任务，请升级 Relay CLI 至 0.6.1 并重启后台进程；本次指令未执行",now(),j.get("id"));
                 continue;
             }
             String agentId = (String) j.get("agent_id");
+            boolean steer=false;
             if (agentId!=null) {
                 var a=agent(agentId);
                 if (!truth(a.get("controllable"))) {
                     update("UPDATE jobs SET status='failed',error=?,finished_at=? WHERE id=?","工作目录不可用或缺少对应 CLI",now(),j.get("id"));
                     continue;
                 }
-                if (busy.contains(agentId) || truth(a.get("external_busy"))) continue;
+                if(claimedAgents.contains(agentId))continue;
+                if (busy.contains(agentId) || truth(a.get("external_busy"))) {
+                    if(!"prompt".equals(j.get("kind")) || !"codex".equals(a.get("kind")) || text(a.get("session_id")).isBlank())continue;
+                    var owners=running.stream().filter(job->agentId.equals(job.get("agent_id"))).toList();
+                    if(owners.isEmpty() && !codexSteering)continue;
+                    if(!owners.isEmpty() && (owners.size()!=1 || !"running".equals(owners.get(0).get("status")) || active.stream().map(Values::object).noneMatch(item->owners.get(0).get("id").equals(item.get("id")) && truth(item.get("steerable")))))continue;
+                    steer=true;
+                }
             }
+            if(steer && steerClaims<steerSlots)steerClaims++;
+            else if(normalClaims<slots)normalClaims++;
+            else continue;
+            claimedAgents.add(agentId);
             busy.add(agentId); String id = text(j.get("id"));
             update("UPDATE jobs SET status='running',started_at=?,lease_until=? WHERE id=?",now(),now()+60,id);
-            var result = job(id); if (agentId!=null) result.put("agent",agent(agentId)); claimed.add(result);
+            var result = job(id); if (agentId!=null) result.put("agent",agent(agentId));
+            if(steer)result.put("steer_only",true);
+            claimed.add(result);
         }
         return map("jobs",claimed,"cancel",cancel);
     }
@@ -603,7 +622,7 @@ final class Store {
         }
         if (j.get("agent_id")!=null) {
             if (sid!=null) update("UPDATE agents SET session_id=? WHERE id=?",sid,j.get("agent_id"));
-            update("UPDATE agents SET external_busy=0 WHERE id=?",j.get("agent_id"));
+            if(!truth(body.get("steered")) && !truth(body.get("steering")))update("UPDATE agents SET external_busy=0 WHERE id=?",j.get("agent_id"));
         }
         update("UPDATE jobs SET status=?,output=?,diagnostics=?,error=?,finished_at=?,artifact_id=? WHERE id=?",status,output,tail(text(body.getOrDefault("diagnostics","")),8000),error,now(),artifactId,jobId);
         return job(jobId);

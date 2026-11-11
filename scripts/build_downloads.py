@@ -48,6 +48,6 @@ def build(output, version):
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output', type=Path, default=PROJECT / 'dist/downloads')
-    p.add_argument('--version', default='0.6.6')
+    p.add_argument('--version', default='0.6.7')
     args = p.parse_args()
     build(args.output.resolve(), args.version)

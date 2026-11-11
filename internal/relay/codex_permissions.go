@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,8 +13,8 @@ import (
 	"time"
 )
 
-// A non-interactive exec cannot answer server-initiated approvals. Use a private
-// app-server for ask mode when the thread has no existing shared owner.
+// Keep a private app-server available for approvals and in-flight input when
+// the thread has no existing shared owner. Legacy CLIs can still use exec.
 func (t *Task) runOwnedCodex(cwd string, writable bool) (M, bool, error) {
 	// Keep Unix socket paths below macOS's length limit.
 	dir, err := os.MkdirTemp("/tmp", "relay-codex-")
@@ -34,21 +35,37 @@ func (t *Task) runOwnedCodex(cwd string, writable bool) (M, bool, error) {
 	if err != nil {
 		return nil, true, err
 	}
-	defer log.Close()
+	defer func() {
+		log.Close()
+		if source, err := os.Open(log.Name()); err == nil {
+			defer source.Close()
+			if stat, err := source.Stat(); err == nil && stat.Size() > 8000 {
+				source.Seek(stat.Size()-8000, io.SeekStart)
+			}
+			if data, err := io.ReadAll(io.LimitReader(source, 8000)); err == nil {
+				diagnosticWriter{task: t}.Write(data)
+			}
+		}
+	}()
 	cmd.Stdout = log
 	cmd.Stderr = log
 	if err = cmd.Start(); err != nil {
 		return nil, true, err
 	}
+	stopped := make(chan struct{})
+	go func() { cmd.Wait(); close(stopped) }()
 	defer func() {
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { cmd.Wait(); close(done) }()
 		select {
-		case <-done:
+		case <-stopped:
+			return
+		default:
+		}
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		select {
+		case <-stopped:
 		case <-time.After(2 * time.Second):
 			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			<-done
+			<-stopped
 		}
 	}()
 	ctx, cancel := t.executionContext()
@@ -62,8 +79,19 @@ func (t *Task) runOwnedCodex(cwd string, writable bool) (M, bool, error) {
 			break
 		}
 		select {
+		case <-stopped:
+			if str(obj(t.job["payload"])["permission_mode"]) != "ask" && !yes(t.job["steer_only"]) {
+				return nil, false, nil // No thread/input submitted; retain legacy exec.
+			}
+			return nil, true, errors.New("Codex 共享服务未能启动，请检查目标设备 Codex")
 		case <-probe.Done():
-			return nil, true, fmt.Errorf("无法启动 Codex 审批服务，请检查或升级目标设备 Codex：%w", err)
+			if t.ctx.Err() != nil {
+				return M{"status": "cancelled"}, true, nil
+			}
+			if ctx.Err() != nil {
+				return nil, true, fmt.Errorf("执行达到设定的 %v 秒上限，已停止本轮", obj(t.job["payload"])["timeout"])
+			}
+			return nil, true, fmt.Errorf("无法启动 Codex 共享服务，请检查或升级目标设备 Codex：%w", err)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
@@ -71,7 +99,8 @@ func (t *Task) runOwnedCodex(cwd string, writable bool) (M, bool, error) {
 	sid := str(obj(t.job["agent"])["session_id"])
 	var started []M
 	if sid == "" {
-		reply, startErr := rpc.call(ctx, "thread/start", M{"cwd": cwd, "approvalPolicy": "on-request", "sandbox": "workspace-write", "ephemeral": false})
+		// The actual turn receives its requested permissions in continueCodex.
+		reply, startErr := rpc.call(ctx, "thread/start", M{"cwd": cwd, "approvalPolicy": "never", "sandbox": "read-only", "ephemeral": false})
 		if startErr != nil {
 			return nil, true, startErr
 		}

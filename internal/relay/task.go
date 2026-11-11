@@ -82,6 +82,8 @@ type Task struct {
 	client                               *Client
 	images                               []taskImage
 	imageDir                             string
+	codexPath, codexTurn                 string
+	codexOverride                        string
 }
 
 func newTask(job M) *Task {
@@ -95,7 +97,16 @@ func (t *Task) progress() M {
 	if t.session != "" {
 		sid = t.session
 	}
-	return M{"id": t.job["id"], "output": tail(t.output+t.partial, MaxOutput), "diagnostics": t.diagnostics, "session_id": sid}
+	return M{"id": t.job["id"], "output": tail(t.output+t.partial, MaxOutput), "diagnostics": t.diagnostics, "session_id": sid, "steerable": t.codexPath != "" && t.codexTurn != ""}
+}
+
+func (t *Task) codexControl() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.codexTurn == "" {
+		return ""
+	}
+	return t.codexPath
 }
 
 // Zero or an omitted timeout means a conversation runs until completion or
@@ -246,6 +257,9 @@ func (t *Task) run(roots []string, writable bool) {
 	result["diagnostics"] = progress["diagnostics"]
 	if progress["session_id"] != nil {
 		result["session_id"] = progress["session_id"]
+	}
+	if yes(t.job["steer_only"]) {
+		result["steering"] = true
 	}
 	t.mu.Lock()
 	t.result = result

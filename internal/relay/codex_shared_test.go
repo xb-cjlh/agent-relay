@@ -214,7 +214,7 @@ func TestSharedCodexCancellationInterruptsOnlyOwnedTurn(t *testing.T) {
 	}
 }
 
-func TestSharedCodexWaitsForLocalTurnWithoutSubmittingOrInterruptingIt(t *testing.T) {
+func TestSharedCodexCancellationBeforeSteeringDoesNotInterruptNativeTurn(t *testing.T) {
 	task := sharedTask(t)
 	busy := make(chan struct{}, 1)
 	mutations := make(chan string, 10)
@@ -235,6 +235,8 @@ func TestSharedCodexWaitsForLocalTurnWithoutSubmittingOrInterruptingIt(t *testin
 				case busy <- struct{}{}:
 				default:
 				}
+			case "thread/turns/list":
+				rpcReply(conn, req, M{"data": []M{}})
 			case "turn/start", "turn/interrupt":
 				mutations <- str(req["method"])
 				rpcReply(conn, req, M{})
@@ -251,6 +253,110 @@ func TestSharedCodexWaitsForLocalTurnWithoutSubmittingOrInterruptingIt(t *testin
 	waitTask(t, task)
 	if task.result["status"] != "cancelled" || len(mutations) != 0 {
 		t.Fatalf("changed a local turn: %v", task.result)
+	}
+}
+
+func TestSharedCodexSteersActiveTurnWithoutWaitingOrChangingPermissions(t *testing.T) {
+	task := sharedTask(t)
+	obj(task.job["payload"])["permission_mode"] = "full"
+	requests := make(chan M, 20)
+	codexFixture(t, func(conn *websocket.Conn) {
+		for {
+			var req M
+			if conn.ReadJSON(&req) != nil {
+				return
+			}
+			requests <- req
+			switch req["method"] {
+			case "initialize":
+				rpcReply(conn, req, M{})
+			case "thread/loaded/list":
+				rpcReply(conn, req, M{"data": []string{"native-session"}})
+			case "thread/resume":
+				rpcReply(conn, req, M{"thread": M{"status": M{"type": "active"}}})
+			case "thread/turns/list":
+				if num(obj(req["params"])["limit"]) != 1 {
+					t.Error("loaded full transcript to find active turn")
+				}
+				rpcReply(conn, req, M{"data": []M{{"id": "native-turn", "status": "inProgress"}}})
+			case "turn/steer":
+				params := obj(req["params"])
+				if params["threadId"] != "native-session" || params["expectedTurnId"] != "native-turn" || params["clientUserMessageId"] != "relay:test-job" || obj(arr(params["input"])[0])["text"] != "continue" {
+					t.Error("wrong steer target or input", params)
+				}
+				// The native turn deliberately never completes.
+				rpcReply(conn, req, M{"turnId": "native-turn"})
+			default:
+				if req["id"] != nil {
+					t.Error("unexpected mutation", req)
+					rpcReply(conn, req, M{})
+				}
+			}
+		}
+	})
+	go task.run(nil, true)
+	waitTask(t, task)
+	if task.result["status"] != "succeeded" || !yes(task.result["steered"]) || task.result["output"] != "" || task.result["session_id"] != "native-session" {
+		t.Fatal(task.result)
+	}
+	for len(requests) > 0 {
+		method := str((<-requests)["method"])
+		if method == "turn/start" || method == "turn/interrupt" || method == "thread/settings/update" {
+			t.Fatal("changed native task or permissions", method)
+		}
+	}
+}
+
+func TestSharedCodexSteerDisconnectDoesNotReplayOrStartAnotherWriter(t *testing.T) {
+	task := sharedTask(t)
+	codexFixture(t, func(conn *websocket.Conn) {
+		for {
+			var req M
+			if conn.ReadJSON(&req) != nil {
+				return
+			}
+			switch req["method"] {
+			case "initialize":
+				rpcReply(conn, req, M{})
+			case "thread/loaded/list":
+				rpcReply(conn, req, M{"data": []string{"native-session"}})
+			case "thread/resume":
+				rpcReply(conn, req, M{"thread": M{"status": M{"type": "active"}}})
+			case "thread/turns/list":
+				rpcReply(conn, req, M{"data": []M{{"id": "native-turn", "status": "inProgress"}}})
+			case "turn/steer":
+				return // Input may have been accepted, but its acknowledgement was lost.
+			default:
+				if req["id"] != nil {
+					t.Error("unexpected request after ambiguous delivery", req)
+				}
+			}
+		}
+	})
+	go task.run(nil, false)
+	waitTask(t, task)
+	if task.result["status"] != "failed" || !strings.Contains(str(task.result["error"]), "未自动重试") {
+		t.Fatal(task.result)
+	}
+}
+
+func TestCodexSteerOnlyDoesNotStartACompetingProcess(t *testing.T) {
+	task := sharedTask(t)
+	task.job["steer_only"] = true
+	t.Setenv("CODEX_HOME", t.TempDir())
+	marker := filepath.Join(t.TempDir(), "unexpected-writer")
+	cli := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(cli, []byte("#!/bin/sh\ntouch '"+marker+"'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(cli)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	go task.run(nil, false)
+	waitTask(t, task)
+	if task.result["status"] != "failed" || !yes(task.result["steering"]) {
+		t.Fatal(task.result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("started another process for an active session")
 	}
 }
 
@@ -292,6 +398,11 @@ func TestSharedCodexDisconnectNeverResubmitsThroughExec(t *testing.T) {
 
 func TestSharedCodexUnloadedSessionKeepsExecFallback(t *testing.T) {
 	task := sharedTask(t)
+	legacy := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\nexit 2\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(legacy)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	codexFixture(t, func(conn *websocket.Conn) {
 		for {
 			var req M

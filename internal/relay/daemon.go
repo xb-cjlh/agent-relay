@@ -199,7 +199,7 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 	if virtual {
 		scope = "roots"
 	}
-	caps := M{"codex": codexErr == nil, "claude": claudeErr == nil, "writable": writable, "discovery_scope": scope, "access_scope": "user", "home": home, "relay_version": Version, "image_input": true, "codex_permissions": true, "claude_permissions": true, "unlimited_tasks": true, "conditional_files": true, "direct_file_upload": true, "session_titles": true}
+	caps := M{"codex": codexErr == nil, "claude": claudeErr == nil, "writable": writable, "discovery_scope": scope, "access_scope": "user", "home": home, "relay_version": Version, "image_input": true, "codex_permissions": true, "claude_permissions": true, "unlimited_tasks": true, "conditional_files": true, "direct_file_upload": true, "session_titles": true, "codex_steering": true}
 	discoveryRoots := roots
 	// Legacy roots is a compatibility field for old servers, not a user setting.
 	if !virtual {
@@ -264,7 +264,9 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 		if capacity < 0 {
 			capacity = 0
 		}
-		reply, e := client.Request("POST", "/api/device/poll", M{"processes": discover(), "active": active, "capacity": capacity, "roots": roots, "capabilities": caps, "sessions": mirror.scan(), "machine_id": machine})
+		_, sharedErr := os.Stat(codexSocket())
+		caps["codex_steering"] = sharedErr == nil
+		reply, e := client.Request("POST", "/api/device/poll", M{"processes": discover(), "active": active, "capacity": capacity, "steer_capacity": 4, "roots": roots, "capabilities": caps, "sessions": mirror.scan(), "machine_id": machine})
 		if e == nil {
 			mirror.acknowledge()
 			lastContact = time.Now()
@@ -280,6 +282,16 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 					continue
 				}
 				t := newTask(job)
+				if yes(job["steer_only"]) {
+					for _, owner := range tasks {
+						if obj(owner.job["agent"])["id"] == obj(job["agent"])["id"] {
+							if path := owner.codexControl(); path != "" {
+								t.codexOverride = path
+								break
+							}
+						}
+					}
+				}
 				t.client = client
 				t.imageDir = filepath.Join(canonical, "images")
 				tasks[id] = t
@@ -289,7 +301,7 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 				select {
 				case <-t.done:
 					if _, e = client.Request("POST", "/api/device/jobs/"+id+"/complete", t.result); e == nil {
-						if t.job["kind"] == "prompt" {
+						if t.job["kind"] == "prompt" && !yes(t.result["steered"]) && !yes(t.result["steering"]) {
 							sid := str(t.result["session_id"])
 							if sid == "" {
 								sid = str(obj(t.job["agent"])["session_id"])

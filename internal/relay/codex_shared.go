@@ -18,6 +18,7 @@ import (
 
 type codexRPC struct {
 	conn    *websocket.Conn
+	path    string
 	input   chan M
 	stopped chan struct{}
 	nextID  int
@@ -48,7 +49,7 @@ func dialCodexPath(ctx context.Context, path string) (*codexRPC, error) {
 		return nil, err
 	}
 	conn.SetReadLimit(16 * 1024 * 1024)
-	rpc := &codexRPC{conn: conn, input: make(chan M, 64), stopped: make(chan struct{})}
+	rpc := &codexRPC{conn: conn, path: path, input: make(chan M, 64), stopped: make(chan struct{})}
 	go func() {
 		defer close(rpc.input)
 		for {
@@ -182,43 +183,45 @@ func (t *Task) trySharedCodex(cwd string, writable bool) (result M, handled bool
 	if agent["kind"] != "codex" {
 		return nil, false, nil
 	}
-	mode := str(obj(t.job["payload"])["permission_mode"])
 	if sid == "" {
-		if mode == "ask" {
-			return t.runOwnedCodex(cwd, writable)
-		}
-		return nil, false, nil
+		return t.runOwnedCodex(cwd, writable)
 	}
 	ctx, cancel := t.executionContext()
 	defer cancel()
 	probe, stopProbe := context.WithTimeout(ctx, 5*time.Second)
-	rpc, connectErr := dialCodex(probe)
+	path := t.codexOverride
+	if path == "" {
+		path = codexSocket()
+	}
+	rpc, connectErr := dialCodexPath(probe, path)
 	if connectErr != nil {
 		stopProbe()
-		if mode == "ask" {
-			return t.runOwnedCodex(cwd, writable)
+		if yes(t.job["steer_only"]) {
+			return nil, true, errors.New("无法连接正在执行此会话的 Codex；没有发送补充消息，请检查目标设备")
 		}
-		return nil, false, nil // No prompt was submitted. Older/standalone CLIs use exec.
+		return t.runOwnedCodex(cwd, writable)
 	}
 	defer rpc.close()
 	loaded, loadErr := rpc.loaded(probe, sid)
 	stopProbe()
 	if loadErr != nil || !loaded {
-		if mode == "ask" {
-			return t.runOwnedCodex(cwd, writable)
+		if yes(t.job["steer_only"]) {
+			return nil, true, errors.New("正在执行此会话的 Codex 不在共享服务中；没有重复启动会话或发送补充消息")
 		}
-		return nil, false, nil
+		return t.runOwnedCodex(cwd, writable)
 	}
 	return t.continueCodex(ctx, rpc, sid, cwd, writable, true)
 }
 
 func (t *Task) continueCodex(ctx context.Context, rpc *codexRPC, sid, cwd string, writable, shared bool, started ...M) (result M, handled bool, err error) {
 	handled = true
-	// Wait for the local turn without steering or cancelling work owned by another client.
+	// An active turn accepts input through steer, retaining its existing owner
+	// and permissions. Idle threads start a separate turn with Relay's settings.
 	var snapshot M
 	if len(started) > 0 {
 		snapshot = started[0]
 	}
+	activeReads := 0
 	for {
 		if snapshot == nil {
 			snapshot, err = rpc.call(ctx, "thread/resume", M{"threadId": sid, "excludeTurns": true})
@@ -236,7 +239,42 @@ func (t *Task) continueCodex(ctx context.Context, rpc *codexRPC, sid, cwd string
 		if status != "active" {
 			return nil, true, fmt.Errorf("本机 Codex 会话当前状态为 %s，请先在本机检查", status)
 		}
-		timer := time.NewTimer(time.Second)
+		activeReads++
+		if activeReads > 3 {
+			return nil, true, errors.New("无法确认 Codex 正在执行的轮次，没有发送补充消息；请稍后重试")
+		}
+		turns, readErr := rpc.call(ctx, "thread/turns/list", M{"threadId": sid, "limit": 1, "sortDirection": "desc"})
+		if readErr != nil {
+			if t.ctx.Err() != nil {
+				return M{"status": "cancelled"}, true, nil
+			}
+			return nil, true, fmt.Errorf("无法读取 Codex 当前轮次，没有发送补充消息：%w", readErr)
+		}
+		for _, entry := range arr(turns["data"]) {
+			turn := obj(entry)
+			if turn["status"] != "inProgress" || str(turn["id"]) == "" {
+				continue
+			}
+			if ctx.Err() != nil {
+				return M{"status": "cancelled"}, true, nil
+			}
+			// Do not replay after an ambiguous acknowledgement, and never interrupt
+			// the turn that another job or native client owns.
+			ackCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+			reply, steerErr := rpc.call(ackCtx, "turn/steer", M{"threadId": sid, "expectedTurnId": turn["id"], "input": t.codexInput(), "clientUserMessageId": "relay:" + str(t.job["id"])})
+			done()
+			if steerErr != nil {
+				return nil, true, fmt.Errorf("向执行中的 Codex 发送补充消息失败；未自动重试，请核实原会话：%w", steerErr)
+			}
+			if reply["turnId"] != turn["id"] {
+				return nil, true, errors.New("Codex 未确认接收补充消息的轮次；请核实原会话，未自动重试")
+			}
+			t.mu.Lock()
+			t.session = sid
+			t.mu.Unlock()
+			return M{"status": "succeeded", "steered": true}, true, nil
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -327,7 +365,13 @@ func (t *Task) continueCodex(ctx context.Context, rpc *codexRPC, sid, cwd string
 	restorePolicy()
 	t.mu.Lock()
 	t.session = sid
+	t.codexPath, t.codexTurn = rpc.path, turnID
 	t.mu.Unlock()
+	defer func() {
+		t.mu.Lock()
+		t.codexPath, t.codexTurn = "", ""
+		t.mu.Unlock()
+	}()
 	result, err = t.followCodexTurn(ctx, rpc, sid, turnID)
 	if ctx.Err() != nil {
 		// Interrupt only the exact turn created by this job, and keep the shared daemon alive.
