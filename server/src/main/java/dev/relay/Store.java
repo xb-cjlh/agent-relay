@@ -209,7 +209,7 @@ final class Store {
             filter+=" AND device_id=? AND BINARY cwd=BINARY ?";args.add(directoryDevice);args.add(cwd);
         }
         if(!query.isBlank()) {
-            filter+=" AND LOWER(CONCAT_WS(' ',name,cwd,kind,IF(kind='claude','Claude Code','Codex'),device_name,preview)) LIKE ? ESCAPE '='";
+            filter+=" AND LOWER(CONCAT_WS(' ',title,name,cwd,kind,IF(kind='claude','Claude Code','Codex'),device_name,preview)) LIKE ? ESCAPE '='";
             args.add("%"+query.strip().toLowerCase(Locale.ROOT).replace("=","==").replace("%","=%").replace("_","=_")+"%");
         }
         return new SessionScope(filter,args);
@@ -438,6 +438,11 @@ final class Store {
             String reason=text(session.getOrDefault("control_reason",""));
             if (!Set.of("","outside_roots","cwd_missing","cli_missing").contains(reason)) throw new ApiException("会话状态无效");
             update("UPDATE agents SET external_busy=?,last_activity=?,cwd=?,controllable=?,control_reason=? WHERE id=?",truth(session.get("busy")) ? 1:0,updated,cwd,truth(control) ? 1:0,reason,agentId);
+            if(session.containsKey("title")) {
+                Object titleValue=session.get("title");
+                if(!(titleValue instanceof String title) || title.codePointCount(0,title.length())>256 || title.indexOf('\0')>=0)throw new ApiException("会话标题格式无效");
+                update("UPDATE agents SET title=? WHERE id=?",title.strip().replaceAll("\\s+"," "),agentId);
+            }
             for (Object entry : list(session.getOrDefault("messages",List.of()),200)) {
                 var m = object(entry); String id = required(m,"id",100), role = required(m,"role",20);
                 Object internal=m.getOrDefault("internal",false);

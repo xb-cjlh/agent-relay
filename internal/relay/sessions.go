@@ -18,6 +18,7 @@ const initialBytes = 2 * 1024 * 1024
 type trackedFile struct {
 	meta                          M
 	offset, mtime, size, released int64
+	titles                        transcriptTitles
 }
 type Mirror struct {
 	roots         []string
@@ -27,6 +28,7 @@ type Mirror struct {
 	lastDiscovery time.Time
 	scoped        bool
 	ignored       map[string]int64
+	titleIndexes  map[string]*sessionTitleIndex
 }
 
 func newMirror(roots []string) *Mirror {
@@ -38,7 +40,7 @@ func newMirror(roots []string) *Mirror {
 	if claude == "" {
 		claude = "~/.claude"
 	}
-	return &Mirror{roots: roots, bases: map[string]string{"codex": filepath.Join(expand(codex), "sessions"), "claude": filepath.Join(expand(claude), "projects")}, files: map[string]*trackedFile{}, pending: map[string]M{}, ignored: map[string]int64{}}
+	return &Mirror{roots: roots, bases: map[string]string{"codex": filepath.Join(expand(codex), "sessions"), "claude": filepath.Join(expand(claude), "projects")}, files: map[string]*trackedFile{}, pending: map[string]M{}, ignored: map[string]int64{}, titleIndexes: map[string]*sessionTitleIndex{}}
 }
 func copyMap(m M) M {
 	n := M{}
@@ -201,6 +203,7 @@ func (m *Mirror) controls(meta M) {
 func (m *Mirror) scan() []M {
 	if time.Since(m.lastDiscovery) >= 5*time.Second {
 		m.lastDiscovery = time.Now()
+		m.loadTitleIndex(filepath.Join(filepath.Dir(m.bases["codex"]), "session_index.jsonl"), "codex")
 		for kind, base := range m.bases {
 			type candidate struct {
 				path  string
@@ -215,6 +218,10 @@ func (m *Mirror) scan() []M {
 					if d.Name() == "subagents" {
 						return filepath.SkipDir
 					}
+					return nil
+				}
+				if kind == "claude" && d.Name() == "sessions-index.json" {
+					m.loadTitleIndex(path, kind)
 					return nil
 				}
 				if !strings.HasSuffix(path, ".jsonl") {
@@ -247,6 +254,7 @@ func (m *Mirror) scan() []M {
 			}
 		}
 	}
+	titleBudget := 2 * 1024 * 1024
 	for path, tracked := range m.files {
 		size := 0
 		for _, batch := range m.pending {
@@ -263,7 +271,9 @@ func (m *Mirror) scan() []M {
 		}
 		previousControl, previousReason := tracked.meta["controllable"], tracked.meta["control_reason"]
 		m.controls(tracked.meta)
-		if tracked.meta["controllable"] != previousControl || tracked.meta["control_reason"] != previousReason {
+		previousTitle := str(tracked.meta["title"])
+		m.readSessionTitle(path, tracked, stat, &titleBudget)
+		if tracked.meta["controllable"] != previousControl || tracked.meta["control_reason"] != previousReason || str(tracked.meta["title"]) != previousTitle {
 			key := str(tracked.meta["kind"]) + ":" + str(tracked.meta["session_id"])
 			batch := m.pending[key]
 			if batch == nil {

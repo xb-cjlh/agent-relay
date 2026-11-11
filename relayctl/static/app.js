@@ -248,6 +248,7 @@ function openSessionDirectory(key) {
 }
 
 function sessionName(agent) {
+  if (agent.title?.trim()) return agent.title.trim();
   const project = String(agent.cwd || '').replace(/\/$/,'').split('/').pop();
   if (agent.origin === 'native') return sessionOrganization === 'directory' ? agent.name || project : project || agent.name;
   const generated = /^(?:codex|claude) · (.+) · [a-z0-9]+$/.exec(agent.name || '');
@@ -264,7 +265,7 @@ function sessionItem(agent,device,now) {
   const timestamp = activityTime(agent), when = new Date(timestamp * 1000);
   const recent = calendarDay(now) - calendarDay(when) <= 86400000;
   const time = when.toLocaleString('zh-CN',recent ? {hour:'2-digit',minute:'2-digit',hour12:false} : {month:'2-digit',day:'2-digit',...(when.getFullYear() === now.getFullYear() ? {} : {year:'numeric'})});
-  const fullName = [kindName(agent.kind),agent.name,device.name,agent.cwd,agent.session_id].filter(Boolean).join(' · ');
+  const fullName = [kindName(agent.kind),agent.title,agent.name,device.name,agent.cwd,agent.session_id].filter(Boolean).join(' · ');
   return `<button class="session-item${selected === agent.id ? ' selected' : ''}" data-agent="${esc(agent.id)}" aria-current="${selected === agent.id ? 'true' : 'false'}" title="${esc(fullName)}"><span class="session-item-top">${kindBadge(agent.kind)}<span class="session-name">${esc(sessionName(agent))}</span>${agent.busy ? '<span class="dot busy" title="正在回复"></span>' : ''}</span><span class="session-item-meta">${!deviceFilter ? `<span class="session-device" title="${esc(device.name)} · ${device.online ? '在线' : '离线'}"><span class="dot ${device.online ? 'online' : 'offline'}"></span><span>${esc(device.name)}</span></span>` : ''}<span class="session-preview">${esc(agent.preview || agent.cwd)}</span><time datetime="${when.toISOString()}" title="${esc(when.toLocaleString('zh-CN'))}">${esc(time)}</time></span></button>`;
 }
 
@@ -326,7 +327,8 @@ function renderHeader() {
   const filteredDevice = state.devices.find(d => d.id === deviceFilter);
   $('empty-description').textContent = filteredDevice ? `${filteredDevice.name} 还没有同步到会话。可在这台设备上新建会话，或切换其他设备。` : '选择已有会话，或在任意设备上新建会话。';
   $('thread').hidden = !agent; $('empty-conversation').hidden = !!agent;
-  $('conversation-title').textContent = agent?.name || '会话';
+  $('conversation-title').textContent = agent?.title || agent?.name || '会话';
+  $('conversation-title').title = agent?.title || agent?.name || '';
   $('conversation-kind').textContent = agent ? kindName(agent.kind) : '';
   $('conversation-kind').className = `agent-badge agent-${agent?.kind === 'claude' ? 'claude' : 'codex'}`;
   $('conversation-kind').hidden = !agent;

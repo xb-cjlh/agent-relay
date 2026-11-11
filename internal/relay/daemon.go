@@ -199,7 +199,7 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 	if virtual {
 		scope = "roots"
 	}
-	caps := M{"codex": codexErr == nil, "claude": claudeErr == nil, "writable": writable, "discovery_scope": scope, "access_scope": "user", "home": home, "relay_version": Version, "image_input": true, "codex_permissions": true, "claude_permissions": true, "unlimited_tasks": true, "conditional_files": true, "direct_file_upload": true}
+	caps := M{"codex": codexErr == nil, "claude": claudeErr == nil, "writable": writable, "discovery_scope": scope, "access_scope": "user", "home": home, "relay_version": Version, "image_input": true, "codex_permissions": true, "claude_permissions": true, "unlimited_tasks": true, "conditional_files": true, "direct_file_upload": true, "session_titles": true}
 	discoveryRoots := roots
 	// Legacy roots is a compatibility field for old servers, not a user setting.
 	if !virtual {
