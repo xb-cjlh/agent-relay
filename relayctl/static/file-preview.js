@@ -63,6 +63,49 @@ function saveArtifact(file) {
 }
 
 let filePreview = null;
+// Keep verified original bytes for revisits, scoped to this signed-in page.
+const filePreviewCache = new Map();
+const filePreviewCacheTTL = 10 * 60 * 1000;
+const filePreviewCacheMaxBytes = 32 * 1024 * 1024;
+const filePreviewCacheMaxEntries = 20;
+const filePreviewCacheKey = preview => JSON.stringify([preview.deviceId,preview.path]);
+
+function clearFilePreviewCache() { filePreviewCache.clear(); }
+
+function cachedPreviewFile(preview) {
+  const key = filePreviewCacheKey(preview), entry = filePreviewCache.get(key);
+  if (!entry) return null;
+  filePreviewCache.delete(key);
+  if (Date.now() - entry.fetchedAt >= filePreviewCacheTTL) return null;
+  filePreviewCache.set(key,entry);
+  return entry;
+}
+
+function cachePreviewFile(preview, file) {
+  const now = Date.now(), entry = {file,fetchedAt:now};
+  const key = filePreviewCacheKey(preview);
+  filePreviewCache.delete(key);
+  for (const [cachedKey,cached] of filePreviewCache) {
+    if (now - cached.fetchedAt >= filePreviewCacheTTL) filePreviewCache.delete(cachedKey);
+  }
+  filePreviewCache.set(key,entry);
+  let bytes = [...filePreviewCache.values()].reduce((sum,cached) => sum + cached.file.data.byteLength,0);
+  for (const [cachedKey,cached] of filePreviewCache) {
+    if (bytes <= filePreviewCacheMaxBytes && filePreviewCache.size <= filePreviewCacheMaxEntries) break;
+    filePreviewCache.delete(cachedKey); bytes -= cached.file.data.byteLength;
+  }
+  return entry;
+}
+
+function showPreviewFile(preview, entry, cached = false) {
+  preview.file = entry.file; preview.fetchedAt = entry.fetchedAt;
+  $('file-preview-name').textContent = entry.file.name;
+  $('file-preview-info').textContent = size(entry.file.data.byteLength) + (cached ? ' · 已缓存' : '');
+  $('file-preview-info').title = '取回时间：' + new Date(entry.fetchedAt).toLocaleString('zh-CN');
+  $('download-file-preview').disabled = false;
+  $('refresh-file-preview').hidden = false;
+  renderFilePreview(preview);
+}
 
 function closeFilePreview(restoreFocus = true) {
   const previous = filePreview; filePreview = null;
@@ -74,6 +117,9 @@ function closeFilePreview(restoreFocus = true) {
   $('file-preview-name').textContent = '文件预览';
   $('file-preview-source').textContent = '';
   $('file-preview-info').textContent = '';
+  $('file-preview-info').title = '';
+  $('refresh-file-preview').hidden = true;
+  $('refresh-file-preview').disabled = false;
   $('download-file-preview').disabled = true;
   updatePreviewLayout();
   if (restoreFocus && previous?.trigger?.isConnected) previous.trigger.focus({preventScroll:true});
@@ -97,7 +143,9 @@ async function openFilePreview(link, trigger) {
   $('file-preview').hidden = false;
   updatePreviewLayout();
   $('close-file-preview').focus({preventScroll:true});
-  await fetchFilePreview(preview);
+  const cached = cachedPreviewFile(preview);
+  if (cached) showPreviewFile(preview,cached,true);
+  else await fetchFilePreview(preview);
 }
 
 function updatePreviewLayout() {
@@ -110,8 +158,9 @@ matchMedia('(max-width: 760px)').addEventListener('change',updatePreviewLayout);
 async function fetchFilePreview(preview) {
   if (!previewCurrent(preview) || preview.loading) return;
   preview.loading = true;
+  $('refresh-file-preview').disabled = true;
   $('retry-file-preview').hidden = true;
-  $('file-preview-content').replaceChildren();
+  if (!preview.file) $('file-preview-content').replaceChildren();
   try {
     $('file-preview-info').textContent = '正在请求文件…';
     const job = await api('jobs',{kind:'file_read',device:preview.deviceId,path:preview.path});
@@ -136,19 +185,23 @@ async function fetchFilePreview(preview) {
     $('file-preview-info').textContent = '正在加载预览…';
     const file = await readArtifact(preview.job.artifact_id);
     if (!previewCurrent(preview)) return;
-    preview.file = file;
-    $('file-preview-name').textContent = file.name;
-    $('file-preview-info').textContent = size(file.data.byteLength);
-    $('download-file-preview').disabled = false;
-    renderFilePreview(preview);
+    showPreviewFile(preview,cachePreviewFile(preview,file));
   } catch(error) {
     if (!previewCurrent(preview)) return;
-    $('file-preview-info').textContent = '取回失败';
-    $('file-preview-content').textContent = error.message;
-    $('retry-file-preview').hidden = false;
+    if (preview.file) {
+      $('file-preview-info').textContent = '更新失败，显示缓存';
+      toast(error.message);
+    } else {
+      $('file-preview-info').textContent = '取回失败';
+      $('file-preview-content').textContent = error.message;
+      $('retry-file-preview').hidden = false;
+    }
     // A network error must not leave an abandoned queued read on the device.
     if (preview.job && !terminal.has(preview.job.status)) api('jobs/' + preview.job.id + '/cancel',{}).catch(()=>{});
-  } finally { preview.loading = false; }
+  } finally {
+    preview.loading = false;
+    if (previewCurrent(preview)) $('refresh-file-preview').disabled = false;
+  }
 }
 
 function previewText(data) {
@@ -214,6 +267,7 @@ document.addEventListener('click',event => {
 });
 $('close-file-preview').addEventListener('click',() => closeFilePreview());
 $('retry-file-preview').addEventListener('click',() => { if (filePreview) fetchFilePreview(filePreview); });
+$('refresh-file-preview').addEventListener('click',() => { if (filePreview) fetchFilePreview(filePreview); });
 $('download-file-preview').addEventListener('click',() => { if (filePreview?.file) saveArtifact(filePreview.file); });
 document.addEventListener('keydown',event => {
   if (event.key === 'Escape' && filePreview && !document.querySelector('dialog[open]')) closeFilePreview();

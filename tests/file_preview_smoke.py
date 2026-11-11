@@ -72,8 +72,9 @@ def main():
                     context = browser.new_context(accept_downloads=True, viewport={'width': 1440, 'height': 900} if browser_name == 'Chromium' else {'width': 390, 'height': 650}, **({'is_mobile': True, 'has_touch': True} if browser_name == 'WebKit' else {}))
                     page = context.new_page(); errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
-                    reads = []
+                    reads = []; artifact_reads = []
                     page.on('request', lambda request: reads.append(request.post_data_json) if request.method == 'POST' and request.url == base + '/api/jobs' else None)
+                    page.on('request', lambda request: artifact_reads.append(request.url) if request.method == 'GET' and request.url.startswith(base + '/api/files/') else None)
                     page.goto(base); server.browser_login(page)
 
                     def click_link(label):
@@ -114,20 +115,63 @@ def main():
                         page.locator('#file-preview-content a').filter(has_text='百分号').click()
                         expect(page.locator('#file-preview-content')).to_contain_text(name + ' percent', timeout=15000)
                         page.locator('#close-file-preview').click()
+                        before = (len(reads),len(artifact_reads))
                         click_link('说明')
                         expect(page.locator('#file-preview-content h1')).to_have_text(name + ' 文件', timeout=15000)
+                        assert (len(reads),len(artifact_reads)) == before, 'reopening a document must reuse verified bytes'
+                        expect(page.locator('#file-preview-info')).to_contain_text('已缓存')
                         page.locator('#file-preview-content a').filter(has_text='代码').click()
                         expect(page.locator('#file-preview-content .highlighted')).to_have_text(name + ' third', timeout=15000)
                         assert reads[-1]['path'] == str(projects[name] / 'main.py')
                         page.locator('#close-file-preview').click()
                         expect(page.locator('#file-preview')).to_be_hidden()
                         assert not page.locator('.conversation').evaluate('(el)=>el.inert')
+                        before = (len(reads),len(artifact_reads))
                         click_link('文件 URI')
                         expect(page.locator('.file-source-line.highlighted')).to_have_text('second', timeout=15000)
+                        assert (len(reads),len(artifact_reads)) == before, 'line anchors must share a cached file'
                         page.locator('#close-file-preview').click()
                         click_link('绝对路径')
                         expect(page.locator('.file-source-line.highlighted')).to_have_text(name + ' third', timeout=15000)
+                        assert (len(reads),len(artifact_reads)) == before
                         page.locator('#close-file-preview').click()
+
+                    # Revisits preserve the fetched snapshot; refresh explicitly fetches latest bytes.
+                    note = projects['home'] / 'docs' / 'note 中文.md'
+                    original = note.read_bytes()
+                    note.write_text('# updated document\n\nnew content\n')
+                    before = (len(reads),len(artifact_reads))
+                    click_link('说明')
+                    expect(page.locator('#file-preview-content h1')).to_have_text('home 文件')
+                    assert (len(reads),len(artifact_reads)) == before
+                    page.locator('#refresh-file-preview').click()
+                    expect(page.locator('#file-preview-content h1')).to_have_text('updated document',timeout=15000)
+                    assert (len(reads),len(artifact_reads)) == (before[0]+1,before[1]+1)
+                    with page.expect_download() as info:
+                        page.locator('#download-file-preview').click()
+                    assert Path(info.value.path()).read_bytes() == note.read_bytes()
+                    note.unlink()
+                    page.locator('#refresh-file-preview').click()
+                    expect(page.locator('#file-preview-info')).to_have_text('更新失败，显示缓存',timeout=15000)
+                    expect(page.locator('#file-preview-content h1')).to_have_text('updated document')
+                    expect(page.locator('#download-file-preview')).to_be_enabled()
+                    note.write_bytes(original)
+                    page.locator('#close-file-preview').click()
+                    before = (len(reads),len(artifact_reads))
+                    page.evaluate("()=>{for (const entry of filePreviewCache.values()) entry.fetchedAt-=filePreviewCacheTTL;}")
+                    click_link('说明')
+                    expect(page.locator('#file-preview-content h1')).to_have_text('home 文件',timeout=15000)
+                    assert (len(reads),len(artifact_reads)) == (before[0]+1,before[1]+1), 'expired snapshots need one fresh read'
+                    page.locator('#close-file-preview').click()
+                    before = len(reads)
+                    page.evaluate('id=>selectAgent(id)',agents['work']['id'])
+                    click_link('说明')
+                    expect(page.locator('#file-preview-content h1')).to_have_text('work 文件',timeout=15000)
+                    page.evaluate('id=>selectAgent(id)',agents['home']['id'])
+                    click_link('说明')
+                    expect(page.locator('#file-preview-content h1')).to_have_text('home 文件')
+                    assert len(reads) == before+1, 'switching sessions must retain cached files'
+                    page.locator('#close-file-preview').click()
 
                     click_link('图片')
                     expect(page.locator('#file-preview-content img')).not_to_have_js_property('naturalWidth', 0, timeout=15000)
@@ -160,6 +204,7 @@ def main():
                     expect(page.locator('#file-preview')).to_be_hidden()
 
                     # A slow old response cannot reopen a preview on another session.
+                    page.evaluate('clearFilePreviewCache()')
                     held = []
                     context.route(base + '/api/files/*', lambda route: held.append(route))
                     click_link('说明')
@@ -198,9 +243,16 @@ def main():
                         assert time.monotonic() < end
                         page.wait_for_timeout(100)
                     assert not errors, errors
+                    # Signing out clears private file bytes before another account can sign in.
+                    click_link('说明')
+                    expect(page.locator('#file-preview-content h1')).to_have_text('home 文件',timeout=15000)
+                    assert page.evaluate('filePreviewCache.size') > 0
+                    page.evaluate('logout(true)')
+                    assert page.evaluate('filePreviewCache.size') == 0
+                    expect(page.locator('#file-preview')).to_be_hidden()
                     context.close()
                     browser.close()
-            print('File previews passed: actual Go reads on two devices, Codex/Claude links, relative/nested/absolute/file URI paths, line anchors, verified original downloads, Markdown/text/image/binary/large files, retries, offline cancellation, mobile WebKit and no model requests.')
+            print('File previews passed: cached revisits and anchors without device or artifact requests, explicit refresh, failed refresh retains old bytes, expiration, session/device isolation, logout cleanup, actual Go reads, downloads, Markdown/text/image/binary/large files, retries, cancellation and mobile WebKit; no model requests.')
         finally:
             for daemon in daemons:
                 daemon.send_signal(signal.SIGINT)
