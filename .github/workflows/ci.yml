@@ -75,3 +75,4 @@ jobs:
           python tests/permissions_smoke.py
           python tests/markdown_smoke.py
           python tests/file_preview_smoke.py
+          python tests/oss_file_preview_smoke.py

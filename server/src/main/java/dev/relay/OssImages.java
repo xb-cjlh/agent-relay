@@ -31,6 +31,7 @@ final class OssImages {
         prefix=raw.endsWith("/")?raw:raw+"/";
         if(raw.isEmpty()||raw.startsWith("/")||raw.contains("..")||raw.length()>200||!raw.matches("[a-zA-Z0-9_/-]+"))throw new IllegalArgumentException("relay.oss.prefix 必须为独立的桶内相对前缀");
     }
+    boolean configured() { return !endpoint.isEmpty()&&!bucket.isEmpty()&&!accessKey.isEmpty()&&!secret.isEmpty(); }
     synchronized OSS client() {
         if(endpoint.isEmpty()||bucket.isEmpty()||accessKey.isEmpty()||secret.isEmpty())throw new ApiException(503,"图片存储尚未配置");
         if(reader==null)reader=build(endpoint,false);
@@ -76,6 +77,33 @@ final class OssImages {
         request.setResponseHeaders(response);
         try{return signing.generatePresignedUrl(request).toString();}
         catch(OSSException|ClientException e){throw unavailable();}
+    }
+    String presignFileGet(String key,String name,long expires) {
+        GeneratePresignedUrlRequest request=new GeneratePresignedUrlRequest(bucket,prefix+key,HttpMethod.GET);
+        request.setExpiration(new Date(expires));
+        ResponseHeaderOverrides response=new ResponseHeaderOverrides();
+        response.setCacheControl("private, max-age=300");
+        response.setContentType("application/octet-stream");
+        response.setContentDisposition("attachment; filename*=UTF-8''"+java.net.URLEncoder.encode(name,java.nio.charset.StandardCharsets.UTF_8).replace("+","%20"));
+        request.setResponseHeaders(response);
+        try{return signerClient().generatePresignedUrl(request).toString();}
+        catch(OSSException|ClientException e){throw unavailable();}
+    }
+    void writeFile(String key,byte[] data,String sha) {
+        ObjectMetadata metadata=new ObjectMetadata();
+        metadata.setContentLength(data.length);metadata.setContentType("application/octet-stream");
+        try { metadata.setContentMD5(Base64.getEncoder().encodeToString(java.security.MessageDigest.getInstance("MD5").digest(data))); }
+        catch(java.security.NoSuchAlgorithmException e){throw new IllegalStateException(e);}
+        metadata.addUserMetadata("sha256",sha);
+        try {client().putObject(bucket,prefix+key,new java.io.ByteArrayInputStream(data),metadata);}
+        catch(OSSException|ClientException e){throw unavailable();}
+    }
+    byte[] readFile(String key) {
+        try(var object=client().getObject(bucket,prefix+key);var in=object.getObjectContent()) {
+            byte[] bytes=in.readNBytes(Values.MAX_FILE+1);
+            if(bytes.length>Values.MAX_FILE)throw new ApiException(413,"文件超过 16 MiB 限制");
+            return bytes;
+        }catch(OSSException|ClientException|java.io.IOException e){throw unavailable();}
     }
     private synchronized OSS signerClient() {
         client();

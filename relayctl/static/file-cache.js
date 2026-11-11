@@ -68,10 +68,11 @@ async function cachedPreviewFile(preview) {
         bytes.onsuccess = () => result({...metadata,file:{...metadata.file,data:bytes.result}});
       };
     }));
-    if (!previewCurrent(preview) || !stored) return null;
+    if (!previewCurrent(preview)) return null;
+    if (!stored) return cloudCachedPreviewFile(preview);
     if (Date.now() - stored.checkedAt >= filePreviewCacheTTL) {
       await fileCacheOperation(db => fileCacheTransaction(db,'readwrite',(store,result,contents) => { store.delete(key); contents.delete(key); }));
-      return null;
+      return cloudCachedPreviewFile(preview);
     }
     entry = stored;
     if (!(entry.file.data instanceof ArrayBuffer)) entry = null;
@@ -122,5 +123,17 @@ async function cachePreviewFile(preview, file) {
   const entry = {key:filePreviewCacheKey(preview),owner:currentUser.id,file,fetchedAt:now,checkedAt:now,usedAt:now};
   rememberPreviewFile(entry);
   await persistPreviewFile(preview,entry);
+  return entry;
+}
+
+// OSS is the shared cache; IndexedDB is only a local acceleration layer.
+async function cloudCachedPreviewFile(preview) {
+  const result = await api('files/cache?' + new URLSearchParams({device:preview.deviceId,path:preview.path}));
+  if (!previewCurrent(preview) || !result.file) return null;
+  const file = await readArtifact(result.file.id,result.file);
+  if (!previewCurrent(preview)) return null;
+  const now = Date.now(), metadata = result.file;
+  const entry = {key:filePreviewCacheKey(preview),owner:currentUser.id,file,fetchedAt:metadata.created_at*1000,checkedAt:metadata.checked_at*1000,usedAt:now};
+  rememberPreviewFile(entry); await persistPreviewFile(preview,entry);
   return entry;
 }

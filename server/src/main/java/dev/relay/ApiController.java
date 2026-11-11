@@ -84,13 +84,24 @@ final class ApiController {
         else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/approvals/[^/]+/expire")) result=store.expireApproval(path.split("/")[4],path.split("/")[6],deviceId);
         else if (method.equals("POST") && path.equals("/api/device/poll")) result=store.poll(deviceId,body);
         else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/complete")) result=store.complete(deviceId,path.split("/")[4],body);
+        else if (method.equals("GET") && path.equals("/api/files/cache")) result=map("file",store.fileStore.cached(required(map("device",request.getParameter("device")),"device"),required(map("path",request.getParameter("path")),"path")));
+        else if (method.equals("GET") && path.matches("/api/files/[^/]+/url")) result=store.fileStore.url(path.split("/")[3]);
+        else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/file-upload")) result=store.fileStore.initiate(deviceId,path.split("/")[4],body);
         else if (method.equals("GET") && path.matches("/api/files/[^/]+")) {
-            var file=store.row("SELECT * FROM artifacts WHERE id=?",path.split("/")[3]);
+            var file=store.fileStore.artifact(path.split("/")[3]);
             store.job(text(file.get("job_id")));
             String filename=URLEncoder.encode(text(file.get("name")),StandardCharsets.UTF_8).replace("+","%20");
-            return ResponseEntity.ok().contentType(MediaType.APPLICATION_OCTET_STREAM).header("X-SHA256",text(file.get("sha256"))).header("Content-Disposition","attachment; filename*=UTF-8''"+filename).body(Files.readAllBytes(store.files.resolve(text(file.get("id")))));
+            return ResponseEntity.ok().contentType(MediaType.APPLICATION_OCTET_STREAM).header("X-SHA256",text(file.get("sha256"))).header("Content-Disposition","attachment; filename*=UTF-8''"+filename).body(store.fileStore.read(file));
         } else throw new ApiException(404,"接口不存在");
         return ResponseEntity.ok(result);
+    }
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString="${relay.files.cleanup-interval-ms:3600000}",initialDelayString="${relay.files.cleanup-initial-ms:60000}")
+    void cleanFileCache() {
+        synchronized(store) {
+            try(Store.Transaction transaction=store.transaction()) {
+                store.fileStore.cleanup(); transaction.commit();
+            } catch(Exception e) { org.slf4j.LoggerFactory.getLogger(getClass()).warn("File cache cleanup postponed"); }
+        }
     }
     @ExceptionHandler(ApiException.class)
     ResponseEntity<?> apiError(ApiException e) { return ResponseEntity.status(e.status).body(map("error",e.getMessage())); }

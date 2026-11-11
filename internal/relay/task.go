@@ -290,6 +290,12 @@ func (t *Task) readFile(roots []string) (M, error) {
 	if sha == str(obj(t.job["payload"])["if_sha256"]) {
 		return M{"status": "succeeded", "file": M{"unchanged": true, "sha256": sha}}, nil
 	}
+	if t.client != nil {
+		result, err := t.uploadFile(info.Name(), data, sha)
+		if err != nil || result != nil {
+			return result, err
+		}
+	}
 	return M{"status": "succeeded", "file": M{"name": info.Name(), "data": base64.StdEncoding.EncodeToString(data), "sha256": sha}}, nil
 }
 func (t *Task) runAgent(roots []string, writable bool) (M, error) {

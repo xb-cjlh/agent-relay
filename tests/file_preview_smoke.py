@@ -75,7 +75,7 @@ def main():
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     reads = []; artifact_reads = []
                     page.on('request', lambda request: reads.append(request.post_data_json) if request.method == 'POST' and request.url == base + '/api/jobs' else None)
-                    page.on('request', lambda request: artifact_reads.append(request.url) if request.method == 'GET' and request.url.startswith(base + '/api/files/') else None)
+                    page.on('request', lambda request: artifact_reads.append(request.url) if request.method == 'GET' and request.url.startswith(base + '/api/files/file_') and not request.url.endswith('/url') else None)
                     page.goto(base); server.browser_login(page)
 
                     def click_link(label):

@@ -253,14 +253,29 @@ func (c *Client) Wait(id string, timeout time.Duration) (M, error) {
 	return nil, errors.New("等待超时，任务仍可通过 relayctl jobs show " + id + " 查看")
 }
 func Download(c *Client, id, output string) (M, error) {
-	b, h, err := c.request("GET", "/api/files/"+url.PathEscape(id), nil)
+	var b []byte
+	grant, err := c.Request("GET", "/api/files/"+url.PathEscape(id)+"/url", nil)
+	expected := ""
+	if err == nil && grant["storage"] == "oss" {
+		b, err = signedFileRequest(context.Background(), "GET", grant, nil)
+		expected = str(grant["sha256"])
+	} else {
+		var api *APIError
+		if err != nil && !(errors.As(err, &api) && api.Status == 404) {
+			return nil, err
+		}
+		var headers http.Header
+		b, headers, err = c.request("GET", "/api/files/"+url.PathEscape(id), nil)
+		expected = headers.Get("X-SHA256")
+	}
 	if err != nil {
 		return nil, err
 	}
 	sha := hashBytes(b)
-	if sha != h.Get("X-SHA256") {
+	if sha != expected {
 		return nil, errors.New("下载文件的 SHA-256 校验失败")
 	}
+
 	target, err := filepath.Abs(expand(output))
 	if err != nil {
 		return nil, err

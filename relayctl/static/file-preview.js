@@ -44,14 +44,16 @@ function localFileLink(href, context = {}) {
 }
 
 async function readArtifact(id, expected) {
-  const response = await api('files/' + encodeURIComponent(id),undefined,true);
-  const data = await response.arrayBuffer(), sha = response.headers.get('X-SHA256');
+  const grant = await api('files/' + encodeURIComponent(id) + '/url');
+  const response = grant.storage === 'oss' ? await fetch(grant.url,{credentials:'omit',referrerPolicy:'no-referrer'}) : await api('files/' + encodeURIComponent(id),undefined,true);
+  if (!response.ok) throw new Error('缓存文件暂不可用，请重试');
+  const data = await response.arrayBuffer(), sha = grant.sha256;
   if (data.byteLength > 16 * 1024 * 1024) throw new Error('文件超过 16 MiB 限制');
   if (!crypto.subtle) throw new Error('浏览器文件校验需要 HTTPS 或 localhost，也可使用 CLI 下载');
   const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256',data))].map(x => x.toString(16).padStart(2,'0')).join('');
   if (hash !== sha || (expected && (hash !== expected.sha256 || data.byteLength !== expected.size))) throw new Error('文件校验失败，请重新取回');
   const encodedName = /filename\*=UTF-8''([^;]+)/i.exec(response.headers.get('Content-Disposition') || '');
-  const name = expected?.name || (encodedName ? decodeURIComponent(encodedName[1]) : 'download');
+  const name = expected?.name || grant.name || (encodedName ? decodeURIComponent(encodedName[1]) : 'download');
   return {id,name,data,sha256:hash};
 }
 

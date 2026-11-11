@@ -20,7 +20,7 @@ class StoreTest {
         public Connection getConnection(String u,String p) throws SQLException { return getConnection(); }
     };
     @Test void unavailableDatabaseFailsHealthCheck() throws Exception {
-        Store store=new Store(directory.toString(),new ObjectMapper(),noDatabase);
+        Store store=new Store(directory.toString(),new ObjectMapper(),noDatabase,new OssImages(new org.springframework.mock.env.MockEnvironment()));
         assertFalse(store.healthy());
     }
     @Test void rejectsInvalidSessionIdsAndNonFiniteTimes() {
