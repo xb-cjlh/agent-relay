@@ -56,8 +56,9 @@ final class ApiController {
         Object result;
         String cursor=request.getParameter("before");
         if (method.equals("GET") && path.equals("/api/state")) result="web".equals(request.getParameter("view"))
-            ? store.snapshot(true,request.getParameter("device"),request.getParameter("q"),request.getParameter("through"),request.getParameter("selected")) : store.snapshot();
-        else if (method.equals("GET") && path.equals("/api/agents")) result=store.sessions(request.getParameter("device"),request.getParameter("q"),cursor);
+            ? store.snapshot(true,request.getParameter("device"),request.getParameter("q"),request.getParameter("through"),request.getParameter("selected"),
+                "directory".equals(request.getParameter("organization")),request.getParameter("directory_device"),request.getParameter("cwd")) : store.snapshot();
+        else if (method.equals("GET") && path.equals("/api/agents")) result=store.sessions(request.getParameter("device"),request.getParameter("q"),cursor,request.getParameter("directory_device"),request.getParameter("cwd"));
         else if (method.equals("POST") && path.equals("/api/register")) result=store.register(body);
         else if (method.equals("POST") && path.equals("/api/devices/merge")) result=store.mergeDevices(body);
         else if (method.equals("POST") && path.equals("/api/agents")) result=store.createAgent(body);

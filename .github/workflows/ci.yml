@@ -70,6 +70,7 @@ jobs:
           python tests/auth_loading_smoke.py
           python tests/session_list_smoke.py
           python tests/session_pagination_smoke.py
+          python tests/workdir_smoke.py
           python tests/conversation_sync_smoke.py
           python tests/account_images_smoke.py
           python tests/permissions_smoke.py

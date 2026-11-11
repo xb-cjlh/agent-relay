@@ -104,6 +104,50 @@ def main():
                         else:
                             assert page.locator('#file-preview').bounding_box()['width'] == 390
                             assert page.locator('.conversation').evaluate('(el)=>el.inert')
+                        if name == 'work':
+                            # Full-page preview works in desktop Chrome and WebKit, including resize.
+                            if browser_name == 'WebKit': page.set_viewport_size({'width': 1200, 'height': 850})
+                            before_fullscreen = (len(reads),len(artifact_reads))
+                            page.locator('#file-preview-content').evaluate('(el)=>el.scrollTop=40')
+                            scroll = page.locator('#file-preview-content').evaluate('(el)=>el.scrollTop')
+                            page.locator('#fullscreen-file-preview').click()
+                            expect(page.locator('#fullscreen-file-preview')).to_have_attribute('aria-pressed','true')
+                            assert page.locator('#file-preview').bounding_box()['width'] == page.viewport_size['width']
+                            assert page.locator('#file-preview').bounding_box()['x'] == 0
+                            assert page.locator('.conversation').evaluate('(el)=>el.inert')
+                            assert page.locator('#sidebar').evaluate('(el)=>el.inert')
+                            assert page.locator('#file-preview-content').evaluate('(el)=>el.scrollTop') == scroll
+                            assert (len(reads),len(artifact_reads)) == before_fullscreen, 'fullscreen must reuse the current file'
+                            expect(page.locator('#download-file-preview')).to_be_in_viewport()
+                            with page.expect_download() as full_download:
+                                page.locator('#download-file-preview').click()
+                            assert Path(full_download.value.path()).read_bytes() == (projects[name] / 'docs' / 'note 中文.md').read_bytes()
+                            # Nested file links retain full-page mode and use the document's directory.
+                            page.locator('#file-preview-content a').filter(has_text='代码').click()
+                            expect(page.locator('#file-preview-content .highlighted')).to_have_text(name + ' third',timeout=15000)
+                            assert reads[-1]['path'] == str(projects[name] / 'main.py')
+                            expect(page.locator('#fullscreen-file-preview')).to_have_attribute('aria-pressed','true')
+                            page.keyboard.press('Escape')
+                            expect(page.locator('#fullscreen-file-preview')).to_have_attribute('aria-pressed','false')
+                            expect(page.locator('#file-preview')).to_be_visible()
+                            assert not page.locator('.conversation').evaluate('(el)=>el.inert')
+                            page.locator('#fullscreen-file-preview').click()
+                            page.locator('#close-file-preview').click()
+                            assert not page.locator('#sidebar').evaluate('(el)=>el.inert')
+                            click_link('说明')
+                            expect(page.locator('#file-preview-content h1')).to_have_text(name + ' 文件')
+                            expect(page.locator('#fullscreen-file-preview')).to_have_attribute('aria-pressed','false')
+                            page.locator('#fullscreen-file-preview').click()
+                            page.set_viewport_size({'width':390,'height':650})
+                            assert page.locator('#file-preview').bounding_box()['width'] == 390
+                            page.keyboard.press('Escape')
+                            assert page.locator('.conversation').evaluate('(el)=>el.inert')
+                            page.keyboard.press('Escape')
+                            expect(page.locator('#file-preview')).to_be_hidden()
+                            assert not page.locator('.conversation').evaluate('(el)=>el.inert')
+                            page.set_viewport_size({'width':1440,'height':900} if browser_name=='Chromium' else {'width':390,'height':650})
+                            click_link('说明')
+                            expect(page.locator('#file-preview-content h1')).to_have_text(name + ' 文件')
                         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
                         with page.expect_download() as info:
                             page.locator('#download-file-preview').click()
@@ -123,7 +167,7 @@ def main():
                         expect(page.locator('#file-preview-info')).to_contain_text('已缓存')
                         page.locator('#file-preview-content a').filter(has_text='代码').click()
                         expect(page.locator('#file-preview-content .highlighted')).to_have_text(name + ' third', timeout=15000)
-                        assert reads[-1]['path'] == str(projects[name] / 'main.py')
+                        assert page.evaluate('filePreview.path') == str(projects[name] / 'main.py')
                         page.locator('#close-file-preview').click()
                         expect(page.locator('#file-preview')).to_be_hidden()
                         assert not page.locator('.conversation').evaluate('(el)=>el.inert')

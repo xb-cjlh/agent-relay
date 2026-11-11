@@ -197,16 +197,32 @@ final class Store {
             return new SessionCursor(time,parts[1]);
         } catch(NumberFormatException e) { throw new ApiException("会话分页参数无效"); }
     }
-    private Map<String,Object> sessionPage(String device,String query,String before,String through,List<Map<String,Object>> devices) {
+    private record SessionScope(String filter,List<Object> args) {}
+    private SessionScope sessionScope(String device,String query,String directoryDevice,String cwd) {
         if(query==null)query="";
         if(query.length()>200)throw new ApiException("搜索内容不能超过 200 个字符");
         String filter=" WHERE 1=1";
         List<Object> args=new ArrayList<>();args.add(owner());
         if(device!=null && !device.isEmpty()) { filter+=" AND device_id=?";args.add(device); }
+        if(cwd!=null) {
+            if(directoryDevice==null || directoryDevice.isEmpty() || cwd.length()>4096)throw new ApiException("工作目录筛选参数无效");
+            filter+=" AND device_id=? AND BINARY cwd=BINARY ?";args.add(directoryDevice);args.add(cwd);
+        }
         if(!query.isBlank()) {
             filter+=" AND LOWER(CONCAT_WS(' ',name,cwd,kind,IF(kind='claude','Claude Code','Codex'),device_name,preview)) LIKE ? ESCAPE '='";
             args.add("%"+query.strip().toLowerCase(Locale.ROOT).replace("=","==").replace("%","=%").replace("_","=_")+"%");
         }
+        return new SessionScope(filter,args);
+    }
+    private List<Map<String,Object>> sessionDirectories(String device,String query) {
+        var scope=sessionScope(device,query,null,null);
+        // Paths are case sensitive even when the database's default collation is not.
+        return rows("SELECT device_id,MIN(cwd) cwd,COUNT(*) session_count,MAX(activity) last_activity FROM ("+SESSION_QUERY+") sessions"+scope.filter()+
+            " GROUP BY device_id,BINARY cwd ORDER BY last_activity DESC,device_id,BINARY cwd",scope.args().toArray());
+    }
+    private Map<String,Object> sessionPage(String device,String query,String before,String through,List<Map<String,Object>> devices,String directoryDevice,String cwd) {
+        var scope=sessionScope(device,query,directoryDevice,cwd);
+        String filter=scope.filter();List<Object> args=scope.args();
         var cursor=sessionCursor(before);var end=sessionCursor(through);
         if(cursor!=null && end!=null)throw new ApiException("会话分页参数无效");
         String window=filter;
@@ -222,7 +238,7 @@ final class Store {
         }
         String source="("+SESSION_QUERY+") sessions";
         var agents=rows("SELECT * FROM "+source+window+" ORDER BY activity DESC,id"+(end==null ? " LIMIT 31" : ""),pageArgs.toArray());
-        if(end!=null && agents.isEmpty())return sessionPage(device,query,null,null,devices);
+        if(end!=null && agents.isEmpty())return sessionPage(device,query,null,null,devices,directoryDevice,cwd);
         boolean more=agents.size()>30 && end==null;
         if(more)agents=new ArrayList<>(agents.subList(0,30));
         String next=null;
@@ -237,18 +253,29 @@ final class Store {
         }
         return map("agents",decorateSessions(agents,devices),"has_more",more,"next_cursor",more ? next:null);
     }
-    Map<String,Object> sessions(String device,String query,String before) {
-        return sessionPage(device,query,before,null,deviceSummaries());
+    Map<String,Object> sessions(String device,String query,String before,String directoryDevice,String cwd) {
+        return sessionPage(device,query,before,null,deviceSummaries(),directoryDevice,cwd);
     }
-    Map<String,Object> snapshot() { return snapshot(false,null,null,null,null); }
-    Map<String,Object> snapshot(boolean web,String device,String query,String through,String selected) {
+    Map<String,Object> snapshot() { return snapshot(false,null,null,null,null,false,null,null); }
+    Map<String,Object> snapshot(boolean web,String device,String query,String through,String selected,boolean byDirectory,String directoryDevice,String cwd) {
         var devices=deviceSummaries();
-        var page=web ? sessionPage(device,query,null,through,devices) : null;
+        var directories=web && byDirectory ? sessionDirectories(device,query) : List.<Map<String,Object>>of();
+        Map<String,Object> activeDirectory=null;
+        if(web && byDirectory) {
+            for(var entry:directories)if(Objects.equals(entry.get("device_id"),directoryDevice) && Objects.equals(entry.get("cwd"),cwd)) { activeDirectory=entry;break; }
+            if(activeDirectory==null && !directories.isEmpty()) {
+                activeDirectory=directories.get(0);through=null;
+            }
+            directoryDevice=activeDirectory==null ? null:text(activeDirectory.get("device_id"));
+            cwd=activeDirectory==null ? null:text(activeDirectory.get("cwd"));
+        }
+        var page=web ? sessionPage(device,query,null,through,devices,directoryDevice,cwd) : null;
         Object agents=web ? page.get("agents") : decorateSessions(rows("SELECT * FROM ("+SESSION_QUERY+") sessions ORDER BY created_at DESC",owner()),devices);
         var jobs=rows("SELECT j.*,d.name device_name,a.name agent_name,a.kind agent_kind FROM jobs j JOIN devices d ON d.id=j.device_id LEFT JOIN agents a ON a.id=j.agent_id WHERE d.owner_user_id=?"+(web ? " AND j.kind='file_read'" : "")+" ORDER BY j.created_at DESC LIMIT 100",owner());
         for (var j : jobs) j.put("payload",decode(j.get("payload")));
         var result=map("devices",devices,"agents",agents,"jobs",jobs,"artifacts",rows("SELECT f.* FROM artifacts f JOIN jobs j ON j.id=f.job_id JOIN devices d ON d.id=j.device_id WHERE d.owner_user_id=? ORDER BY f.created_at DESC LIMIT 100",owner()),"server_time",now());
         if(web) {
+            if(byDirectory) { result.put("directories",directories);result.put("active_directory",activeDirectory); }
             result.put("has_more",page.get("has_more"));result.put("next_cursor",page.get("next_cursor"));
             var remembered=List.<Map<String,Object>>of();
             if(selected!=null && !selected.isEmpty()) {

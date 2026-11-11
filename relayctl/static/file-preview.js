@@ -88,6 +88,7 @@ function closeFilePreview(restoreFocus = true) {
   $('file-preview-info').textContent = '';
   $('file-preview-info').title = '';
   $('download-file-preview').disabled = true;
+  setPreviewFullscreen(false);
   updatePreviewLayout();
   if (restoreFocus && previous?.trigger?.isConnected) previous.trigger.focus({preventScroll:true});
 }
@@ -101,6 +102,7 @@ async function openFilePreview(link, trigger) {
     if (filePreview.file) renderFilePreview(filePreview);
     return;
   }
+  const fullscreen = $('file-preview').classList.contains('fullscreen');
   closeFilePreview(false);
   const preview = {...link,account:generation,trigger}; filePreview = preview;
   $('file-preview-name').textContent = link.path.split('/').pop() || link.path;
@@ -108,6 +110,7 @@ async function openFilePreview(link, trigger) {
   $('file-preview-source').title = link.path;
   $('retry-file-preview').hidden = true;
   $('file-preview').hidden = false;
+  setPreviewFullscreen(fullscreen);
   updatePreviewLayout();
   $('close-file-preview').focus({preventScroll:true});
   const cached = await cachedPreviewFile(preview).catch(() => null);
@@ -118,9 +121,20 @@ async function openFilePreview(link, trigger) {
 }
 
 function updatePreviewLayout() {
-  const covered = !!filePreview && matchMedia('(max-width: 760px)').matches;
+  const covered = !!filePreview && ($('file-preview').classList.contains('fullscreen') || matchMedia('(max-width: 760px)').matches);
   document.querySelector('.conversation').inert = covered;
   $('sidebar').inert = covered;
+  $('file-preview').setAttribute('role',covered ? 'dialog' : 'complementary');
+  if (covered) $('file-preview').setAttribute('aria-modal','true');
+  else $('file-preview').removeAttribute('aria-modal');
+}
+function setPreviewFullscreen(enabled) {
+  $('file-preview').classList.toggle('fullscreen',enabled);
+  const button = $('fullscreen-file-preview'), label = enabled ? '退出全屏' : '全屏预览';
+  button.setAttribute('aria-label',label); button.title = label;
+  button.setAttribute('aria-pressed',String(enabled));
+  button.innerHTML = icon(enabled ? 'collapse' : 'expand');
+  updatePreviewLayout();
 }
 matchMedia('(max-width: 760px)').addEventListener('change',updatePreviewLayout);
 
@@ -273,8 +287,20 @@ document.addEventListener('click',event => {
   catch(error) { toast(error.message); }
 });
 $('close-file-preview').addEventListener('click',() => closeFilePreview());
+$('fullscreen-file-preview').addEventListener('click',() => { if (filePreview) setPreviewFullscreen(!$('file-preview').classList.contains('fullscreen')); });
 $('retry-file-preview').addEventListener('click',() => { if (filePreview) fetchFilePreview(filePreview); });
 $('download-file-preview').addEventListener('click',() => { if (filePreview?.file) saveArtifact(filePreview.file); });
 document.addEventListener('keydown',event => {
-  if (event.key === 'Escape' && filePreview && !document.querySelector('dialog[open]')) closeFilePreview();
+  if (!filePreview || document.querySelector('dialog[open]')) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if ($('file-preview').classList.contains('fullscreen')) { setPreviewFullscreen(false); $('fullscreen-file-preview').focus({preventScroll:true}); }
+    else closeFilePreview();
+  }
+  if (event.key === 'Tab' && $('file-preview').getAttribute('aria-modal') === 'true') {
+    const items = [...$('file-preview').querySelectorAll('button:not([disabled]),a[href],summary,[tabindex="0"]')].filter(el => el.getClientRects().length);
+    const first = items[0], last = items.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  }
 });

@@ -5,6 +5,9 @@ const icons = {
   monitor:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/>',
   folder:'<path d="M3 8V5h6l3 3h9v12H3Z"/>', logout:'<path d="M9 4H4v16h5m6-13 5 5-5 5m-5-5h10"/>',
   close:'<path d="m6 6 12 12M6 18 18 6"/>', menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',
+  expand:'<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
+  collapse:'<path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/>',
+  right:'<path d="m9 5 7 7-7 7"/>',
   up:'<path d="M12 19V5m-5 5 5-5 5 5"/>', down:'<path d="M12 5v14m-5-5 5 5 5-5"/>',
   stop:'<rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/>',
   image:'<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 6-6 4 4 3-3 5 5"/>',
@@ -28,6 +31,9 @@ const imageUploads = new Set();
 let state = {devices:[], agents:[], jobs:[], artifacts:[]};
 let selected = sessionStorage.getItem('relay-selected') || '';
 let deviceFilter = sessionStorage.getItem('relay-device-filter') || '';
+let sessionOrganization = sessionStorage.getItem('relay-session-organization') === 'directory' ? 'directory' : 'time';
+let activeDirectory = sessionStorage.getItem('relay-active-directory') || '';
+let directoryExpanded = true;
 let messages = new Map();
 let activeJobs = [];
 let approvals = [];
@@ -74,7 +80,7 @@ async function logout(localOnly=false) {
   for (const upload of imageUploads) upload.abort();
   for (const key of Object.keys(sessionStorage)) if (key.startsWith('relay-')) sessionStorage.removeItem(key);
   sessionRevision++; refreshRequest++; refreshing = false; sessionRows = []; sessionThrough = sessionCursor = null; sessionHasMore = false; sessionLoading = true; sessionMoreLoading = false; sessionError = false;
-  selected = ''; deviceFilter = ''; drafts.clear(); imageDrafts.clear(); imageUrls.clear(); messages.clear(); activeJobs=[]; approvals=[]; renderApprovals(); state={devices:[],agents:[],jobs:[],artifacts:[]};
+  selected = ''; deviceFilter = ''; sessionOrganization = 'time'; activeDirectory = ''; directoryExpanded = true; drafts.clear(); imageDrafts.clear(); imageUrls.clear(); messages.clear(); activeJobs=[]; approvals=[]; renderApprovals(); state={devices:[],agents:[],jobs:[],artifacts:[]};
   showScreen('login');
   $('new-key-secret').textContent = ''; $('new-key').hidden = true;
   $('key-list').replaceChildren(); $('messages').replaceChildren(); $('attachment-list').replaceChildren();
@@ -93,6 +99,11 @@ function sessionParameters() {
   if (deviceFilter) params.set('device',deviceFilter);
   const query = $('search').value.trim();
   if (query) params.set('q',query);
+  if (sessionOrganization === 'directory') {
+    params.set('organization','directory');
+    const directory = directoryScope();
+    if (directory) { params.set('directory_device',directory.device_id); params.set('cwd',directory.cwd); }
+  }
   return params;
 }
 
@@ -103,7 +114,7 @@ function refresh() {
   const current = generation, revision = sessionRevision, request = ++refreshRequest;
   const params = sessionParameters(); params.set('view','web');
   if (sessionThrough) params.set('through',sessionThrough);
-  const remembered = (deviceFilter && sessionStorage.getItem('relay-selected-device:' + deviceFilter)) || selected;
+  const remembered = (sessionOrganization === 'directory' && sessionStorage.getItem('relay-selected-directory:' + activeDirectory)) || (deviceFilter && sessionStorage.getItem('relay-selected-device:' + deviceFilter)) || selected;
   if (remembered) params.set('selected',remembered);
   refreshPromise = (async () => {
     try {
@@ -113,6 +124,11 @@ function refresh() {
       sessionCursor = next.next_cursor; sessionHasMore = !!next.has_more;
       sessionLoading = false; sessionError = false;
       state = next;
+      if (sessionOrganization === 'directory') {
+        const key = next.active_directory ? directoryKey(next.active_directory) : '';
+        if (key !== activeDirectory) { sessionThrough = null; directoryExpanded = true; }
+        activeDirectory = key; sessionStorage.setItem('relay-active-directory',key);
+      }
       if (next.selected_agent && !state.agents.some(agent => agent.id === next.selected_agent.id)) state.agents = [...state.agents,next.selected_agent];
       setConnected(true); showScreen('workspace');
       if (deviceFilter && !state.devices.some(device => device.id === deviceFilter)) {
@@ -169,19 +185,29 @@ async function loadMoreSessions() {
 
 function renderSessionPager() {
   const button = $('load-more-sessions');
-  button.hidden = sessionLoading || (!sessionHasMore && !sessionError);
+  button.hidden = sessionLoading || (!sessionHasMore && !sessionError) || (sessionOrganization === 'directory' && !directoryExpanded);
   button.disabled = sessionMoreLoading;
   button.textContent = sessionMoreLoading ? '正在加载…' : sessionError ? '加载失败，点击重试' : '加载更多';
 }
 
-function scopedAgents() { return state.agents.filter(agent => !deviceFilter || agent.device_id === deviceFilter); }
+const directoryKey = entry => JSON.stringify([entry.device_id,entry.cwd]);
+function directoryScope() {
+  try {
+    const value = JSON.parse(activeDirectory);
+    return Array.isArray(value) && value.length === 2 && value.every(part => typeof part === 'string') ? {device_id:value[0],cwd:value[1]} : null;
+  } catch { return null; }
+}
+function scopedAgents() {
+  const directory = sessionOrganization === 'directory' ? directoryScope() : null;
+  return state.agents.filter(agent => (!deviceFilter || agent.device_id === deviceFilter) && (!directory || (agent.device_id === directory.device_id && agent.cwd === directory.cwd)));
+}
 
 const activityTime = agent => Number(agent.last_activity || agent.created_at || 0);
 const newestFirst = (a,b) => activityTime(b) - activityTime(a) || a.id.localeCompare(b.id);
 
 function preferredAgent() {
   const agents = scopedAgents();
-  const remembered = (deviceFilter && sessionStorage.getItem('relay-selected-device:' + deviceFilter)) || selected;
+  const remembered = (sessionOrganization === 'directory' && sessionStorage.getItem('relay-selected-directory:' + activeDirectory)) || (deviceFilter && sessionStorage.getItem('relay-selected-device:' + deviceFilter)) || selected;
   return agents.find(agent => agent.id === remembered)?.id || agents.slice().sort(newestFirst)[0]?.id || '';
 }
 
@@ -195,6 +221,7 @@ function renderDeviceFilter() {
 
 function setDeviceFilter(id) {
   deviceFilter = state.devices.some(device => device.id === id) ? id : '';
+  activeDirectory = ''; directoryExpanded = true;
   sessionStorage.setItem('relay-device-filter',deviceFilter);
   clearTimeout(searchTimer); $('search').value = '';
   renderDeviceFilter();
@@ -202,9 +229,27 @@ function setDeviceFilter(id) {
   resetSessions();
 }
 
+function setSessionOrganization(value) {
+  if (!['time','directory'].includes(value) || value === sessionOrganization) return;
+  sessionOrganization = value; directoryExpanded = true;
+  sessionStorage.setItem('relay-session-organization',value);
+  const agent = state.agents.find(agent => agent.id === selected);
+  if (value === 'directory') activeDirectory = agent ? directoryKey(agent) : '';
+  resetSessions();
+}
+
+function openSessionDirectory(key) {
+  if (key === activeDirectory) { directoryExpanded = !directoryExpanded; renderSessions(); return; }
+  if (!state.directories?.some(entry => directoryKey(entry) === key)) return;
+  activeDirectory = key; directoryExpanded = true;
+  sessionStorage.setItem('relay-active-directory',key);
+  resetSessions();
+  $('session-items').querySelector('[aria-expanded="true"]')?.scrollIntoView({block:'nearest'});
+}
+
 function sessionName(agent) {
   const project = String(agent.cwd || '').replace(/\/$/,'').split('/').pop();
-  if (agent.origin === 'native') return project || agent.name;
+  if (agent.origin === 'native') return sessionOrganization === 'directory' ? agent.name || project : project || agent.name;
   const generated = /^(?:codex|claude) · (.+) · [a-z0-9]+$/.exec(agent.name || '');
   return generated ? generated[1] : agent.name;
 }
@@ -234,10 +279,27 @@ function renderSessions() {
     if (!groups.has(group)) groups.set(group,[]);
     groups.get(group).push(sessionItem(agent,device,now));
   }
-  const sections = [...groups].map(([label,items]) => `<section class="session-group" aria-label="${label}"><h2 class="session-group-heading">${label}</h2>${items.join('')}</section>`).join('');
+  const empty = sessionLoading ? '<p class="sidebar-empty" role="status">正在加载会话…</p>' : sessionError ? '' : `<p class="sidebar-empty">${query ? '没有匹配的会话。' : deviceFilter ? '这台设备还没有同步到会话，可先在设备上使用 Codex / Claude Code，或新建会话。' : '还没有会话。连接设备后，会自动发现当前用户各目录下的已有会话。'}</p>`;
+  let sections = [...groups].map(([label,items]) => `<section class="session-group" aria-label="${label}"><h2 class="session-group-heading">${label}</h2>${items.join('')}</section>`).join('');
+  if (sessionOrganization === 'directory') {
+    const items = [...groups.values()].flat().join('') || empty;
+    sections = (state.directories || []).filter(entry => !deviceFilter || entry.device_id === deviceFilter).map(entry => {
+      const key = directoryKey(entry), open = key === activeDirectory && directoryExpanded;
+      const path = entry.cwd || '', parts = path.split('/').filter(Boolean), name = parts.pop() || path || '未知目录';
+      const device = devices.get(entry.device_id), parent = (parts.length > 2 ? '…/' : '/') + parts.slice(-2).join('/');
+      const meta = (!deviceFilter ? `<span class="directory-device">${esc(device?.name)}</span><span>·</span>` : '') + `<span class="directory-parent">${esc(parent)}</span>`;
+      return `<section class="directory-group"><button type="button" class="directory-heading" data-directory="${esc(key)}" aria-expanded="${open}" title="${esc((device?.name || '') + ' · ' + path)}">${icon('right')}${icon('folder')}<span class="directory-label"><span class="directory-name">${esc(name)}</span><span class="directory-meta">${meta}</span></span><span class="directory-count">${entry.session_count}</span></button>${open ? `<div class="directory-sessions" data-directory-sessions>${items}</div>` : ''}</section>`;
+    }).join('');
+  }
+  document.querySelectorAll('[data-organization]').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.organization === sessionOrganization)));
   const list = $('session-items');
-  const html = sections || (sessionLoading ? '<p class="sidebar-empty" role="status">正在加载会话…</p>' : sessionError ? '' : `<p class="sidebar-empty">${query ? '没有匹配的会话。' : deviceFilter ? '这台设备还没有同步到会话，可先在设备上使用 Codex / Claude Code，或新建会话。' : '还没有会话。连接设备后，会自动发现当前用户各目录下的已有会话。'}</p>`);
-  if (list.dataset.rendered !== html) { list.innerHTML = html; list.dataset.rendered = html; }
+  const html = sections || empty, pager = $('load-more-sessions');
+  if (list.dataset.rendered !== html) {
+    const focused = document.activeElement?.closest('[data-directory]')?.dataset.directory;
+    $('session-list').append(pager); list.innerHTML = html; list.dataset.rendered = html;
+    (list.querySelector('[data-directory-sessions]') || $('session-list')).append(pager);
+    if (focused) [...list.querySelectorAll('[data-directory]')].find(button => button.dataset.directory === focused)?.focus({preventScroll:true});
+  }
   renderSessionPager();
 }
 
@@ -249,7 +311,10 @@ function selectAgent(id,closeSidebar=true,load=true) {
   $('prompt').value = drafts.get(id) ?? sessionStorage.getItem('relay-draft:' + id) ?? '';
   sessionStorage.setItem('relay-selected', id);
   const agent = state.agents.find(agent => agent.id === id);
-  if (agent) sessionStorage.setItem('relay-selected-device:' + agent.device_id,id);
+  if (agent) {
+    sessionStorage.setItem('relay-selected-device:' + agent.device_id,id);
+    sessionStorage.setItem('relay-selected-directory:' + directoryKey(agent),id);
+  }
   $('thread').hidden = !id; $('empty-conversation').hidden = !!id;
   renderSessions(); renderHeader(); if (closeSidebar) toggleSidebar(false);
   if (id && load) loadConversation().catch(error => toast(error.message));
@@ -472,14 +537,15 @@ async function downloadFile(id) {
 }
 
 function toggleSidebar(open) { $('sidebar').classList.toggle('open',open); $('sidebar-backdrop').hidden = !open; }
-function currentDevice() { return deviceFilter || state.agents.find(a => a.id === selected)?.device_id || state.devices[0]?.id || ''; }
+function currentDevice() { return deviceFilter || (sessionOrganization === 'directory' ? directoryScope()?.device_id : '') || state.agents.find(a => a.id === selected)?.device_id || state.devices[0]?.id || ''; }
 function newSession() {
   if (!state.devices.length) { $('devices-dialog').showModal(); return; }
   updateOptions(); $('agent-device').value = currentDevice(); suggestDirectory(); $('agent-dialog').showModal();
 }
 function suggestDirectory() {
   const device = state.devices.find(d => d.id === $('agent-device').value);
-  if (device) { $('agent-cwd').value = device.capabilities.home || device.roots[0] || ''; $('agent-kind').value = device.capabilities.codex ? 'codex' : 'claude'; }
+  const directory = sessionOrganization === 'directory' ? directoryScope() : null;
+  if (device) { $('agent-cwd').value = (directory?.device_id === device.id ? directory.cwd : '') || device.capabilities.home || device.roots[0] || ''; $('agent-kind').value = device.capabilities.codex ? 'codex' : 'claude'; }
 }
 async function submit(form, action) {
   const button = form.querySelector('button[type=submit]'); button.disabled = true;
@@ -500,9 +566,15 @@ $('search').addEventListener('input',() => {
 $('load-more-sessions').addEventListener('click',loadMoreSessions);
 $('session-list').addEventListener('scroll',() => {
   const pane = $('session-list');
-  if (pane.scrollTop > 0 && pane.scrollHeight - pane.scrollTop - pane.clientHeight < 120 && !sessionError) loadMoreSessions();
+  const pager = $('load-more-sessions'), bounds = pager.getBoundingClientRect(), area = pane.getBoundingClientRect();
+  if (pane.scrollTop > 0 && !pager.hidden && bounds.top < area.bottom + 120 && bounds.bottom >= area.top && !sessionError) loadMoreSessions();
 });
 $('device-filter').addEventListener('change',e => setDeviceFilter(e.target.value));
+document.querySelectorAll('[data-organization]').forEach(button => button.addEventListener('click',() => setSessionOrganization(button.dataset.organization)));
+$('session-items').addEventListener('click',event => {
+  const button = event.target.closest('[data-directory]');
+  if (button) openSessionDirectory(button.dataset.directory);
+});
 $('new-agent').addEventListener('click',newSession); $('empty-new-agent').addEventListener('click',newSession);
 $('devices-button').addEventListener('click',() => { toggleSidebar(false); $('devices-dialog').showModal(); });
 $('files-button').addEventListener('click',() => { $('file-device').value = currentDevice(); toggleSidebar(false); $('files-dialog').showModal(); });
@@ -518,6 +590,14 @@ $('agent-form').addEventListener('submit',e => {
     state.agents.push(created); sessionRows.unshift(created);
     $('agent-dialog').close();
     if (deviceFilter && deviceFilter !== agent.device_id) setDeviceFilter(agent.device_id);
+    if (sessionOrganization === 'directory') {
+      sessionRevision++; refreshRequest++; refreshing = false;
+      sessionMoreLoading = sessionLoading = sessionError = false; sessionHasMore = false;
+      clearTimeout(searchTimer); $('search').value = '';
+      activeDirectory = directoryKey(created); directoryExpanded = true; sessionThrough = sessionCursor = null;
+      sessionRows = [created];
+      sessionStorage.setItem('relay-active-directory',activeDirectory);
+    }
     renderDeviceFilter(); selectAgent(agent.id); $('prompt').focus(); await refresh();
   });
 });

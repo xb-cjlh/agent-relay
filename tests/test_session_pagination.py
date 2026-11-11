@@ -95,9 +95,54 @@ class SessionPaginationCase(unittest.TestCase):
         state = other.request('GET', '/api/state?' + urlencode({'view': 'web', 'selected': self.all[0]['id']}))
         self.assertEqual(state['devices'], [])
         self.assertIsNone(state['selected_agent'])
+        grouped = other.request('GET', '/api/state?' + urlencode({'view': 'web', 'organization': 'directory', 'directory_device': home, 'cwd': self.all[0]['cwd']}))
+        self.assertEqual(grouped['directories'], [])
+        self.assertEqual(grouped['agents'], [])
+        self.assertIsNone(grouped['active_directory'])
         for cursor in ['NaN|agt_a', 'Infinity|agt_a', '-1|agt_a', 'bad', '1|bad', '1|agt_a|extra']:
             with self.assertRaises(APIError) as error:
                 self.get(before=cursor)
             self.assertEqual(error.exception.status, 400)
         with self.assertRaises(APIError):
             self.get(q='a' * 201)
+
+    def test_work_directories_include_old_sessions_and_paginate_exact_paths(self):
+        identity, device = self.devices[1]
+        target = next(a for a in self.all if a['device_id'] == identity['id'] and a['cwd'].endswith('project-0'))
+        cwd = target['cwd']
+        sessions = [{'kind': 'codex' if i % 2 else 'claude', 'session_id': 'shared-' + str(i),
+                     'name': 'shared-' + str(i), 'cwd': cwd, 'updated_at': 2000 + i, 'busy': False} for i in range(34)]
+        sessions += [{'kind': 'claude', 'session_id': 'case-sensitive', 'name': 'case', 'cwd': cwd.replace('project-', 'Project-'), 'updated_at': 500, 'busy': False},
+                     {'kind': 'codex', 'session_id': 'same-name', 'name': 'same basename', 'cwd': str(self.root / 'other' / 'project-0'), 'updated_at': 400, 'busy': False}]
+        device.request('POST', '/api/device/poll', {'sessions': sessions})
+        params = dict(view='web', organization='directory', directory_device=identity['id'], cwd=cwd)
+        state = self.get('/api/state', **params)
+        self.assertEqual(len(state['directories']), 72)
+        self.assertEqual(sum(d['session_count'] for d in state['directories']), 106)
+        self.assertEqual(state['active_directory']['cwd'], cwd)
+        self.assertEqual(state['active_directory']['session_count'], 35)
+        self.assertEqual(state['directories'][0], state['active_directory'])
+        self.assertEqual(len(state['agents']), 30)
+        self.assertEqual({a['kind'] for a in state['agents']}, {'codex', 'claude'})
+        second = self.get(directory_device=identity['id'], cwd=cwd, before=state['next_cursor'])
+        self.assertEqual(len(second['agents']), 5)
+        self.assertFalse(second['has_more'])
+        all_rows = state['agents'] + second['agents']
+        self.assertEqual(len({a['id'] for a in all_rows}), 35)
+        self.assertTrue(all(a['device_id'] == identity['id'] and a['cwd'] == cwd for a in all_rows))
+        last = all_rows[-1]
+        live = self.get('/api/state', through=str(last['last_activity']) + '|' + last['id'], **params)
+        self.assertEqual(len(live['agents']), 35)
+        self.assertFalse(live['has_more'])
+        # Search reaches old groups and filters their counts across the whole account.
+        matches = self.get('/api/state', view='web', organization='directory', q='%_')
+        self.assertEqual(len(matches['directories']), 2)
+        self.assertTrue(all(d['session_count'] == 1 for d in matches['directories']))
+        scoped = self.get('/api/state', view='web', organization='directory', device=self.devices[0][0]['id'])
+        self.assertEqual(len(scoped['directories']), 35)
+        self.assertTrue(all(d['device_id'] == self.devices[0][0]['id'] for d in scoped['directories']))
+        self.assertEqual(self.get(directory_device=identity['id'], cwd=cwd, device=self.devices[0][0]['id'])['agents'], [])
+        for invalid in [{'cwd': cwd}, {'directory_device': identity['id'], 'cwd': '/' * 4097}]:
+            with self.assertRaises(APIError) as error:
+                self.get(**invalid)
+            self.assertEqual(error.exception.status, 400)

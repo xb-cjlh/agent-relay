@@ -25,6 +25,7 @@
 <button id="new-agent" class="new-session"><span data-icon="plus"></span>新会话</button>
 <div class="device-switch"><label for="device-filter">切换设备</label><select id="device-filter"><option value="">全部设备</option></select></div>
 <label class="search"><span data-icon="search"></span><input id="search" type="search" placeholder="搜索会话" aria-label="搜索会话" maxlength="200"></label>
+<div class="session-organization" role="group" aria-label="会话组织方式"><button type="button" data-organization="time" aria-pressed="true">按时间</button><button type="button" data-organization="directory" aria-pressed="false">按目录</button></div>
 <div id="session-list" class="session-list" aria-label="会话列表"><div id="session-items"></div><button id="load-more-sessions" class="load-more-sessions" type="button" hidden>加载更多</button></div>
 <div class="sidebar-footer">
 <button id="devices-button"><span data-icon="monitor"></span>设备<span id="device-count"></span></button>
@@ -44,7 +45,7 @@
 <div class="composer-actions"><div><button id="attach-image" class="icon-button" type="button" aria-label="添加图片" title="添加图片"><span data-icon="image"></span></button><input id="image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif" multiple hidden><label class="sr-only" for="permission-mode">Agent 执行权限（从下一条消息生效）</label><select id="permission-mode" class="permission-select" hidden><option value="device">设备默认</option><option value="ask">按需审批</option><option value="full">完全访问</option></select><span id="composer-hint">Enter 发送，Shift + Enter 换行</span></div><div><button id="stop-generation" type="button" class="stop-button" hidden><span data-icon="stop"></span>停止</button><button id="send-button" type="submit" class="send-button" aria-label="发送消息" title="发送消息"><span data-icon="up"></span></button></div></div></form><p id="permission-note" class="permission-note" hidden></p><p id="queue-hint" class="queue-hint"></p></div>
 </div></main>
 <aside id="file-preview" class="file-preview" aria-label="文件预览" tabindex="-1" hidden>
-<div class="file-preview-header"><div><h2 id="file-preview-name">文件预览</h2><p id="file-preview-source"></p></div><button id="close-file-preview" class="icon-button" type="button" aria-label="关闭文件预览"><span data-icon="close"></span></button></div>
+<div class="file-preview-header"><div><h2 id="file-preview-name">文件预览</h2><p id="file-preview-source"></p></div><button id="fullscreen-file-preview" class="icon-button" type="button" aria-label="全屏预览" title="全屏预览" aria-pressed="false"><span data-icon="expand"></span></button><button id="close-file-preview" class="icon-button" type="button" aria-label="关闭文件预览"><span data-icon="close"></span></button></div>
 <div class="file-preview-toolbar"><span id="file-preview-info" role="status"></span><button id="retry-file-preview" type="button" class="button secondary" hidden>重试</button><button id="download-file-preview" type="button" class="button secondary" disabled>下载原文件</button></div>
 <div id="file-preview-content" class="file-preview-content" tabindex="0"></div>
 </aside></div>
