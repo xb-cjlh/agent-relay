@@ -4,3 +4,6 @@ Integrity: sha512-4113TdXeLAsMruJ79OpFL5O8+LTFXhQqZ260rF3tgUmiNAtRm4Uume04I+65PR
 Bundled third-party license notices are retained in mermaid.min.js.
 The official code-split ES modules are vendored under mermaid-12.3.0/.
 They retain upstream license notices and load diagram types on demand.
+relay-common-v1.mjs bundles the upstream core, flowchart, sequence, and Dagre
+modules with esbuild 0.25.12. Other modules fall back to the original ES modules.
+Reproduce with scripts/build_mermaid_common.py; upstream files remain intact.

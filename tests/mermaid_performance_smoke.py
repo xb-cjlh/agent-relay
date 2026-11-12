@@ -54,6 +54,7 @@ def main():
                     assert len(page.evaluate('diagramResults')) == 2, 'identical diagrams rendered twice'
                     assert not any(url.endswith('/vendor/mermaid.min.js') for url in requests), 'full bundle loaded'
                     module_urls = set(requests)
+                    assert len(requests) == 1 and requests[0].endswith('/relay-common-v1.mjs'), 'common diagrams need only one library request'
                     loaded_bytes = sum((Path(__file__).resolve().parents[1] / 'relayctl/static' / url.split(base + '/',1)[1]).stat().st_size for url in module_urls)
                     assert loaded_bytes < 1500000, loaded_bytes
                     assert not any('/elk-' in url for url in requests), 'ordinary flowcharts loaded the large ELK layout'
@@ -76,11 +77,21 @@ def main():
                         expect(blocks.nth(index)).to_have_attribute('data-diagram-rendered','1',timeout=10000)
                     assert len(page.evaluate('diagramResults')) == 2
                     assert set(requests) == module_urls
+                    # Advanced diagrams retain the complete upstream renderer.
+                    sync(source + '\n```mermaid\n---\nconfig:\n  layout: elk\n---\nflowchart LR\n A[ELK] --> B[layout]\n```\n\n```mermaid\npie title Examples\n "A" : 2\n "B" : 3\n```\n')
+                    page.evaluate('loadConversation()')
+                    expect(blocks).to_have_count(5)
+                    blocks.nth(3).scroll_into_view_if_needed()
+                    expect(blocks.nth(3)).to_have_attribute('data-diagram-rendered','1',timeout=15000)
+                    expect(blocks.nth(3).frame_locator('iframe').locator('svg')).to_contain_text('ELK')
+                    blocks.nth(4).scroll_into_view_if_needed()
+                    expect(blocks.nth(4)).to_have_attribute('data-diagram-rendered','1',timeout=15000)
+                    expect(blocks.nth(4).frame_locator('iframe').locator('svg')).to_contain_text('Examples')
                     assert not errors, errors
                     page.evaluate('logout(true)')
                     expect(page.locator('.mermaid-engine')).to_have_count(0)
                     assert page.evaluate('diagramCache.size + diagramPending.size + diagramQueue.length') == 0
-                    print(json.dumps({'browser':name,'first_three_diagrams_ms':cold_ms,'unique_diagrams_rendered':2,'engine_instances':1,'loaded_library_bytes':loaded_bytes,'gzip_library_bytes':gzip_bytes,'streaming_frames_preserved':True,'repeat_layouts':0,'logout_cleared':True}),flush=True)
+                    print(json.dumps({'browser':name,'first_three_diagrams_ms':cold_ms,'unique_common_diagrams_rendered':2,'common_library_requests':1,'engine_instances':1,'loaded_library_bytes':loaded_bytes,'gzip_library_bytes':gzip_bytes,'streaming_frames_preserved':True,'repeat_layouts':0,'advanced_diagrams_supported':True,'logout_cleared':True}),flush=True)
                     context.close(); browser.close()
                     sync(source)
             assert not client.request('GET','/api/state')['jobs'], 'diagram rendering started a remote task'
