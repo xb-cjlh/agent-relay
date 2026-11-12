@@ -128,6 +128,23 @@ class InstallationCase(unittest.TestCase):
             self.assertIn('no-store', headers['Cache-Control'])
             self.assertNotIn('ETag', headers)
 
+    def test_mermaid_modules_are_public_versioned_and_compressed(self):
+        module='/vendor/mermaid-12.3.0/mermaid.esm.min.mjs'
+        request=urllib.request.Request(self.url+module,headers={'Origin':'null','Accept-Encoding':'gzip'})
+        with urllib.request.urlopen(request) as response:
+            data=gzip.decompress(response.read())
+            self.assertEqual('gzip',response.headers['Content-Encoding'])
+            self.assertIn('text/javascript',response.headers['Content-Type'])
+            self.assertEqual('public, max-age=31536000, immutable',response.headers['Cache-Control'])
+            self.assertEqual('*',response.headers['Access-Control-Allow-Origin'])
+            self.assertIsNone(response.headers.get('Access-Control-Allow-Credentials'))
+            self.assertEqual((PROJECT/'relayctl/static'/module.lstrip('/')).read_bytes(),data)
+        for path in ['/vendor/mermaid-12.3.0/chunks/mermaid.esm.min/missing.mjs','/vendor/mermaid-12.3.0/../../application.properties']:
+            with self.assertRaises(urllib.error.HTTPError) as missing:self.request(path)
+            self.assertEqual(404,missing.exception.code)
+        _,headers=self.request('/api/auth/session')
+        self.assertIsNone(headers.get('Access-Control-Allow-Origin'))
+
     def test_corrupted_download_never_replaces_existing_cli(self):
         dist=self.root/'downloads'; release=dist/'broken'; release.mkdir(parents=True)
         asset='relayctl-' + ('darwin' if os.uname().sysname=='Darwin' else 'linux') + '-' + ('arm64' if os.uname().machine in ['arm64','aarch64'] else 'amd64')

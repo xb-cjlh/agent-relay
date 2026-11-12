@@ -15,7 +15,8 @@ import org.springframework.stereotype.Component;
 @Component
 final class PublicContent {
     private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/diagrams.js","/diagram-renderer.js","/diagram.css","/vendor/mermaid.min.js","/file-cache.js","/file-preview.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
-    static boolean cacheableAsset(String path) { return CACHEABLE_ASSETS.contains(path); }
+    static boolean mermaidModule(String path) { return path.matches("/vendor/mermaid-12\\.3\\.0/(mermaid\\.esm\\.min\\.mjs|chunks/mermaid\\.esm\\.min/[a-zA-Z0-9_-]+\\.mjs)"); }
+    static boolean cacheableAsset(String path) { return CACHEABLE_ASSETS.contains(path) || mermaidModule(path); }
     private final Path downloads;
     private final Map<String,String> assetTags = new ConcurrentHashMap<>();
     PublicContent(@Value("${relay.downloads:./dist/downloads}") String downloads) {
@@ -43,10 +44,15 @@ final class PublicContent {
             Map.entry("/install-agent.md","public/install-agent.md"),
             Map.entry("/skills/agent-bridge/SKILL.md","public/agent-bridge/SKILL.md")
         ).get(path);
+        if (mermaidModule(path)) file="static"+path;
         if (file!=null) {
             var resource=new ClassPathResource(file);
-            String mime=file.endsWith(".html") ? "text/html;charset=UTF-8" : file.endsWith(".css") ? "text/css;charset=UTF-8" : file.endsWith(".js") ? "text/javascript;charset=UTF-8" : file.endsWith(".svg") ? "image/svg+xml" : "text/plain;charset=UTF-8";
+            if(!resource.exists())throw new ApiException(404,"页面不存在");
+            String mime=file.endsWith(".html") ? "text/html;charset=UTF-8" : file.endsWith(".css") ? "text/css;charset=UTF-8" : file.endsWith(".js") || file.endsWith(".mjs") ? "text/javascript;charset=UTF-8" : file.endsWith(".svg") ? "image/svg+xml" : "text/plain;charset=UTF-8";
             var response=ResponseEntity.ok().contentType(MediaType.parseMediaType(mime)).contentLength(resource.contentLength());
+            // Public versioned modules are also used by the opaque sandbox.
+            // They contain no credentials and never accept credentialed CORS.
+            if(mermaidModule(path)) return response.header("Access-Control-Allow-Origin","*").header("Cache-Control","public, max-age=31536000, immutable").body(head ? null : resource);
             if (cacheableAsset(path)) {
                 String tag=assetTags.get(file);
                 if (tag==null) {

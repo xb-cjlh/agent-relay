@@ -76,6 +76,7 @@ async function logout(localOnly=false) {
   if (!localOnly) await fetch('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json','X-Relay-Request':'1'},body:'{}'}).catch(()=>{});
   const cacheOwner = currentUser?.id;
   signedIn = false; currentUser = null; generation++; conversationRequest++;
+  clearDiagrams();
   closeFilePreview(false);
   clearFilePreviewCache(cacheOwner);
   for (const upload of imageUploads) upload.abort();
@@ -493,8 +494,7 @@ function renderMessages() {
         return `<section class="message-part"><div class="message-byline">${icon('agent')}<span>${kindName(agent?.kind)}</span><time>${date(part.created_at)}</time></div><div class="message-body">${text}</div></section>`;
       }).join('');
       const queued = message.role === 'user' && message.status === 'queued';
-      node.innerHTML = `${body}${queued ? `<div class="message-state">等待执行 <button data-cancel="${esc(message.job_id)}">取消</button></div>` : ''}${message.role === 'assistant' && message.content && ['running','cancelling'].includes(message.status) ? '<div class="message-state"><span class="dot busy"></span>正在回复</div>' : ''}${message.role === 'assistant' && error ? `<div class="message-error">${esc(error)}</div>` : ''}`;
-      if (message.role === 'assistant' && message.diagnostics) node.innerHTML += `<details class="execution-details"><summary>执行日志</summary><pre>${esc(message.diagnostics)}</pre></details>`;
+      setMessageMarkup(node,`${body}${queued ? `<div class="message-state">等待执行 <button data-cancel="${esc(message.job_id)}">取消</button></div>` : ''}${message.role === 'assistant' && message.content && ['running','cancelling'].includes(message.status) ? '<div class="message-state"><span class="dot busy"></span>正在回复</div>' : ''}${message.role === 'assistant' && error ? `<div class="message-error">${esc(error)}</div>` : ''}${message.role === 'assistant' && message.diagnostics ? `<details class="execution-details"><summary>执行日志</summary><pre>${esc(message.diagnostics)}</pre></details>` : ''}`);
       node.dataset.signature = signature;
     }
     if (node !== cursor) container.insertBefore(node,cursor);
