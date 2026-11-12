@@ -469,20 +469,41 @@ function richText(text, fileContext) { const source = String(text); return markd
 
 function renderMessages() {
   const container = $('messages'), agent = state.agents.find(a => a.id === selected);
-  const ordered = [...messages.values()].sort((a,b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
-  const visible = ordered.filter(m => !(m.role === 'assistant' && !m.content && m.status === 'queued'));
+  // A running task can span several user instructions. Sort each native
+  // assistant message globally before grouping adjacent replies for display.
+  const timeline = [];
+  for (const message of messages.values()) {
+    if (message.role === 'assistant' && !message.content && message.status === 'queued') continue;
+    const segments = message.role === 'assistant' && message.segments?.length ? message.segments : null;
+    if (segments) segments.forEach((segment,index) => timeline.push({message,start:segment.start,
+      content:message.content.slice(segment.start,segment.end),created_at:segment.created_at,last:index === segments.length-1}));
+    else timeline.push({message,start:0,content:message.content,created_at:message.created_at,last:true});
+  }
+  timeline.sort((a,b) => a.created_at-b.created_at || a.message.id.localeCompare(b.message.id) || a.start-b.start);
+  const visible = [], represented = new Set();
+  for (const entry of timeline) {
+    let row = visible[visible.length-1];
+    if (!row || row.source.id !== entry.message.id) {
+      const first = !represented.has(entry.message.id); represented.add(entry.message.id);
+      row = {id:first ? entry.message.id : entry.message.id+':part:'+entry.start,source:entry.message,parts:[],last:false};
+      visible.push(row);
+    }
+    row.parts.push({content:entry.content,created_at:entry.created_at}); row.last ||= entry.last;
+  }
   const existing = new Map([...container.children].map(node => [node.dataset.id,node]));
   let cursor = container.firstElementChild;
-  for (const message of visible) {
+  for (const row of visible) {
+    const message = {...row.source,id:row.id,content:row.parts.map(part => part.content || '').join('\n'),segments:null,
+      status:row.last ? row.source.status : 'succeeded',error:row.last ? row.source.error : null,diagnostics:row.last ? row.source.diagnostics : ''};
     let node = existing.get(message.id);
     if (!node) { node = document.createElement('article'); node.dataset.id = message.id; }
-    const signature = JSON.stringify([message,agent?.kind,agent?.device_id,agent?.cwd]);
+    const signature = JSON.stringify([message,row.parts,agent?.kind,agent?.device_id,agent?.cwd]);
     if (node.dataset.signature !== signature) {
       node.className = 'message ' + message.role;
+      node.dataset.jobId = message.job_id || '';
       const writerConflict = message.role === 'assistant' && message.status === 'failed' && agent?.kind === 'codex' && [message.content,message.diagnostics].some(value=>value?.includes('already has an active writer'));
       const error = writerConflict && message.error?.includes('exit status') ? '更新并重启目标设备的 Relay 后，可通过 Codex 共享服务继续。若设备未提供共享服务，请先在本机退出这个会话再发送。' : message.error;
-      const parts = message.role === 'assistant' && message.segments?.length && !writerConflict
-        ? message.segments.map(segment => ({content: message.content.slice(segment.start,segment.end),created_at: segment.created_at})) : [message];
+      const parts = writerConflict ? [message] : row.parts;
       const body = parts.map(part => {
         let text;
         if (writerConflict) text = `<p class="session-conflict">本次指令未执行：原会话仍由本机 Codex 持有。</p>${message.content ? `<details class="execution-details"><summary>技术详情</summary><pre>${esc(message.content)}</pre></details>` : ''}`;

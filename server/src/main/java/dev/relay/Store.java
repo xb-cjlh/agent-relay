@@ -332,7 +332,7 @@ final class Store {
             payloads.put(id,payload);
             relayMessages.add(map("id",id+":user","role","user","content",payload.get("prompt"),"images",payload.getOrDefault("images",List.of()),"created_at",created,"job_id",id,"status",j.get("status"),"error",j.get("error")));
             if(truth(payload.get("steered")) && text(j.get("output")).isEmpty())suppressed.add(id+":assistant");
-            else relayMessages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"segments",assistantSegments(j,messages,assistantCopies,current),"diagnostics",j.get("diagnostics"),"created_at",created+0.000001,"job_id",id,"status",j.get("status"),"error",j.get("error")));
+            else relayMessages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"segments",assistantSegments(j,messages,assistantCopies,current),"diagnostics",j.get("diagnostics"),"created_at",outputTime(j,0,created+0.000001),"job_id",id,"status",j.get("status"),"error",j.get("error")));
             if (!TERMINAL.contains(j.get("status"))) active.add(map("id",id,"status",j.get("status")));
         }
         // Native sync and task streaming can arrive at different times. Overlapping
@@ -414,15 +414,45 @@ final class Store {
             if (content.isEmpty()) continue;
             int position = wrapped.indexOf("\n"+content+"\n",offset);
             if (position<0) continue;
-            if (!normalized.substring(offset,position).isBlank()) segments.add(map("start",base+offset,"end",base+position,"created_at",timestamp));
+            if (!normalized.substring(offset,position).isBlank()) segments.add(map("start",base+offset,"end",base+position,"created_at",outputTime(job,base+offset,timestamp)));
             offset = position+content.length();
             timestamp = created;
             segments.add(map("start",base+position,"end",base+offset,"created_at",timestamp));
             copies.add(message.get("id"));
         }
         if (segments.isEmpty()) return List.of();
-        if (!normalized.substring(offset).isBlank()) segments.add(map("start",base+offset,"end",base+normalized.length(),"created_at",timestamp));
+        if (!normalized.substring(offset).isBlank()) {
+            int pending=offset;
+            while(pending<normalized.length() && Character.isWhitespace(normalized.charAt(pending)))pending++;
+            segments.add(map("start",base+offset,"end",base+normalized.length(),"created_at",outputTime(job,base+pending,timestamp)));
+        }
         return segments;
+    }
+    // These are observation checkpoints, not message boundaries. Native events
+    // provide boundaries; checkpoints date a still-streaming tail before those
+    // events arrive. Store them in the task payload so refresh/restarts agree.
+    double outputTime(Map<String,Object> job,int offset,double fallback) {
+        for(Object value:list(object(decode(job.get("payload"))).getOrDefault("output_timeline",List.of()),256)) {
+            var point=object(value);
+            if(number(point.get("end"))>offset)return number(point.get("created_at"));
+        }
+        return fallback;
+    }
+    void observeOutput(Map<String,Object> job,String output) {
+        if(!"prompt".equals(job.get("kind")) || output.equals(job.get("output")))return;
+        String old=text(job.get("output"));
+        var payload=object(decode(job.get("payload")));
+        var points=new ArrayList<>(list(payload.getOrDefault("output_timeline",List.of()),256));
+        if(!output.startsWith(old))points.clear(); // tail truncation or a corrected stream
+        else if(points.isEmpty() && !old.isEmpty())points.add(map("end",old.length(),"created_at",number(job.get("created_at"))+0.000001));
+        if(!output.isEmpty())points.add(map("end",output.length(),"created_at",now()));
+        if(points.size()>256) {
+            var first=object(points.remove(0));
+            object(points.get(0)).put("created_at",first.get("created_at"));
+        }
+        payload.put("output_timeline",points);
+        String encoded=encode(payload);job.put("payload",encoded);
+        update("UPDATE jobs SET payload=? WHERE id=?",encoded,job.get("id"));
     }
     void syncSessions(String deviceId, Object value) {
         for (Object item : list(value,100)) {
@@ -572,7 +602,10 @@ final class Store {
         if (body.containsKey("roots") || body.containsKey("capabilities")) update("UPDATE devices SET roots=?,capabilities=? WHERE id=?",encode(roots(body.getOrDefault("roots",List.of()))),encode(object(body.get("capabilities"))),deviceId);
         for (Object entry : active) {
             var item = object(entry);
-            update("UPDATE jobs SET output=?,diagnostics=?,lease_until=? WHERE id=? AND device_id=? AND status IN ('running','cancelling')",tail(text(item.getOrDefault("output","")),MAX_OUTPUT),tail(text(item.getOrDefault("diagnostics","")),8000),now()+60,item.get("id"),deviceId);
+            String output=tail(text(item.getOrDefault("output","")),MAX_OUTPUT);
+            var owned=rows("SELECT * FROM jobs WHERE id=? AND device_id=? AND status IN ('running','cancelling')",item.get("id"),deviceId);
+            if(!owned.isEmpty())observeOutput(owned.get(0),output);
+            update("UPDATE jobs SET output=?,diagnostics=?,lease_until=? WHERE id=? AND device_id=? AND status IN ('running','cancelling')",output,tail(text(item.getOrDefault("diagnostics","")),8000),now()+60,item.get("id"),deviceId);
         }
         var cancel = new ArrayList<Object>(); for (var j : rows("SELECT id FROM jobs WHERE device_id=? AND status='cancelling'",deviceId)) cancel.add(j.get("id"));
         int capacity = integer(body.getOrDefault("capacity",0),0,8,"capacity");
@@ -627,6 +660,7 @@ final class Store {
         if (j.get("status").equals("cancelling")) status="cancelled";
         String sid = body.get("session_id")==null ? null : sessionId(body.get("session_id"));
         String output = tail(text(body.getOrDefault("output","")),MAX_OUTPUT);
+        observeOutput(j,output);
         if(status.equals("succeeded") && j.get("kind").equals("directory_list")) {
             var directory=object(body.get("directory"));
             required(directory,"path");required(directory,"parent");list(directory.get("entries"),200);

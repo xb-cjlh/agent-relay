@@ -110,7 +110,7 @@ def main():
                         device.request('POST', '/api/device/poll', {'active': [{'id': job['id'], 'output': output}]})
                         expect(page.locator('#messages [data-id="' + native_id + '"]')).to_have_count(0, timeout=15000)
                         expect(page.locator('#messages .assistant .message-body').filter(has_text=latest)).to_have_count(1)
-                        task = page.locator('#messages [data-id="' + job['id'] + ':assistant"]')
+                        task = page.locator('#messages .assistant[data-job-id="' + job['id'] + '"]')
                         expect(task.locator('.message-part')).to_have_count(2)
                         expect(task.locator('.message-byline')).to_have_count(2)
                         expect(task.locator('.message-part').first.locator('p')).to_have_count(2)

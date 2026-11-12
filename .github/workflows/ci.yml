@@ -74,6 +74,7 @@ jobs:
           python tests/directory_browser_smoke.py
           python tests/session_titles_smoke.py
           python tests/conversation_sync_smoke.py
+          python tests/message_order_smoke.py
           python tests/account_images_smoke.py
           python tests/permissions_smoke.py
           python tests/markdown_smoke.py
