@@ -1,4 +1,4 @@
 package relay
 
 // Release builds set this through -ldflags -X.
-var Version = "0.6.8"
+var Version = "0.6.9"

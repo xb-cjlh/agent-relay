@@ -1,4 +1,4 @@
-/* Images are resized and hashed locally; only the compressed Blob reaches OSS. */
+/* Attachments go directly to OSS. Raster images keep the compressed image path. */
 window.RelayImages = (() => {
   const targetBytes = 1024 * 1024, maxEdge = 2048;
   const encode = (canvas,type,quality) => new Promise((resolve,reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('无法压缩图片')),type,quality));
@@ -60,26 +60,35 @@ window.RelayImages = (() => {
     const name=(file.name||'粘贴的图片').replace(/\.[^.]+$/,'').slice(0,245)+suffix;
     return {blob,name,mime:blob.type,size:blob.size,sha256,md5,width,height};
   }
-  async function upload(prepared,api,signal) {
+  const isImage = file => /^image\/(png|jpeg|webp|gif|heic|heif|avif|bmp)$/i.test(file.type);
+  async function prepareFile(file,signal) {
+    check(signal);
+    if (file.size>16*1024*1024) throw new Error('单个文件最大 16 MiB');
+    const buffer=await file.arrayBuffer();
+    check(signal);
+    const sha256=[...new Uint8Array(await crypto.subtle.digest('SHA-256',buffer))].map(n=>n.toString(16).padStart(2,'0')).join('');
+    return {blob:file,name:file.name||'attachment',mime:'application/octet-stream',size:file.size,sha256,md5:btoa(SparkMD5.ArrayBuffer.hash(buffer,true))};
+  }
+  async function upload(prepared,api,signal,resource='images') {
     check(signal);
     const {blob,name,mime,size,sha256,md5}=prepared;
-    const ticket=await api('images/uploads',{name,mime,size,sha256,md5});
+    const ticket=await api(resource+'/uploads',{name,mime,size,sha256,md5});
     check(signal);
     let putError;
     try {
       const response=await fetch(ticket.url,{method:'PUT',body:blob,headers:ticket.headers,credentials:'omit',mode:'cors',redirect:'error',referrerPolicy:'no-referrer',signal});
-      if (!response.ok) throw new Error(`图片直传失败 (${response.status})`);
+      if (!response.ok) throw new Error(`附件直传失败 (${response.status})`);
     } catch(error) { putError=error; }
     check(signal);
     // Confirm even after a lost PUT response. Completion is idempotent.
     for (let attempt=0;attempt<2;attempt++) {
-      try { return await api('images/uploads/'+encodeURIComponent(ticket.uploadId)+'/complete',{}); }
+      try { return await api(resource+'/uploads/'+encodeURIComponent(ticket.uploadId)+'/complete',{}); }
       catch(error) {
         if (!attempt && (!error.status || error.status>=500)) {check(signal);continue;}
-        if (putError && error.status===409) throw new Error('图片直传失败，请检查网络后重新选择图片');
+        if (putError && error.status===409) throw new Error('附件直传失败，请检查网络后重新选择');
         throw error;
       }
     }
   }
-  return {prepare,upload};
+  return {prepare,prepareFile,isImage,upload};
 })();

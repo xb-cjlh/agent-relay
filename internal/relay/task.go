@@ -82,6 +82,8 @@ type Task struct {
 	client                               *Client
 	images                               []taskImage
 	imageDir                             string
+	attachments                          []M
+	attachmentDir                        string
 	codexPath, codexTurn                 string
 	codexOverride                        string
 	nativeTitle                          bool
@@ -337,7 +339,7 @@ func (t *Task) runAgent(roots []string, writable bool) (M, error) {
 	if !info.IsDir() {
 		return nil, errors.New("会话工作目录不存在")
 	}
-	if err = t.prepareImages(); err != nil {
+	if err = t.prepareInputs(); err != nil {
 		if t.ctx.Err() != nil {
 			return M{"status": "cancelled"}, nil
 		}

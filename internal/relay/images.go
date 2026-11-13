@@ -14,7 +14,10 @@ import (
 	"regexp"
 )
 
-type taskImage struct{ path, mime, data string }
+type taskImage struct {
+	path, mime, data string
+	size             int
+}
 
 var imageID = regexp.MustCompile(`^img_[a-zA-Z0-9]+$`)
 
@@ -59,7 +62,7 @@ func (t *Task) prepareImages() error {
 		if err = saveImage(path, data); err != nil {
 			return err
 		}
-		t.images = append(t.images, taskImage{path: path, mime: mime, data: base64.StdEncoding.EncodeToString(data)})
+		t.images = append(t.images, taskImage{path: path, mime: mime, data: base64.StdEncoding.EncodeToString(data), size: len(data)})
 	}
 	return nil
 }
@@ -83,14 +86,14 @@ func saveImage(path string, data []byte) error {
 }
 
 func (t *Task) codexInput() []M {
-	input := []M{{"type": "text", "text": str(obj(t.job["payload"])["prompt"])}}
+	input := []M{{"type": "text", "text": t.agentPrompt()}}
 	for _, img := range t.images {
 		input = append(input, M{"type": "localImage", "path": img.path})
 	}
 	return input
 }
 func (t *Task) agentInput(kind string) string {
-	prompt := str(obj(t.job["payload"])["prompt"])
+	prompt := t.agentPrompt()
 	if kind != "claude" || len(t.images) == 0 {
 		return prompt
 	}
@@ -98,7 +101,7 @@ func (t *Task) agentInput(kind string) string {
 	return string(b) + "\n"
 }
 func (t *Task) claudeInput() M {
-	prompt := str(obj(t.job["payload"])["prompt"])
+	prompt := t.agentPrompt()
 	content := []M{}
 	for _, img := range t.images {
 		content = append(content, M{"type": "image", "source": M{"type": "base64", "media_type": img.mime, "data": img.data}})

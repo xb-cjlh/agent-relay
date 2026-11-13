@@ -15,7 +15,8 @@ final class ApiController {
     private final PublicContent content;
     private final AuthService auth;
     private final ImageStore images;
-    ApiController(Store store, PublicContent content,AuthService auth,ImageStore images) { this.store=store; this.content=content;this.auth=auth;this.images=images; }
+    private final AttachmentStore files;
+    ApiController(Store store, PublicContent content,AuthService auth,ImageStore images,AttachmentStore files) { this.store=store; this.content=content;this.auth=auth;this.images=images;this.files=files; }
 
     @RequestMapping("/**")
     ResponseEntity<?> handle(HttpServletRequest request) throws Exception {
@@ -65,14 +66,26 @@ final class ApiController {
         else if (method.equals("POST") && path.equals("/api/agents")) result=store.createAgent(body);
         else if (method.equals("GET") && path.matches("/api/agents/[^/]+/messages")) result=store.conversation(path.split("/")[3],cursor);
         else if (method.equals("POST") && path.equals("/api/jobs")) {
-            List<Object> attachments=List.of();
-            if(body.containsKey("images")) {
-                if(!"prompt".equals(body.get("kind")))throw new ApiException("只有会话消息支持图片");
+            List<Object> attachments=List.of(),uploadedFiles=List.of();
+            if(body.containsKey("images")||body.containsKey("files")) {
+                if(!"prompt".equals(body.get("kind")))throw new ApiException("只有会话消息支持附件");
                 var agent=store.agent(required(body,"agent"));
-                attachments=images.validate(body.get("images"),text(agent.get("device_id")));
+                String device=text(agent.get("device_id"));
+                attachments=images.validate(body.getOrDefault("images",List.of()),device);
+                uploadedFiles=files.validate(body.getOrDefault("files",List.of()),device);
+                if(attachments.size()+uploadedFiles.size()>8)throw new ApiException("每条消息最多 8 个附件，其中图片最多 4 张");
+                double total=0;
+                for(Object value:attachments)total+=number(object(value).get("size"));
+                for(Object value:uploadedFiles)total+=number(object(value).get("size"));
+                if(total>AttachmentStore.MAX_TOTAL)throw new ApiException(413,"每条消息的附件合计最大 32 MiB");
             }
-            result=store.createJob(body,attachments);
+            result=store.createJob(body,attachments,uploadedFiles);
         }
+        else if(method.equals("POST")&&path.equals("/api/attachments/uploads"))result=files.initiate(body);
+        else if(method.equals("POST")&&path.matches("/api/attachments/uploads/upl_[a-zA-Z0-9]+/complete"))result=files.complete(path.split("/")[4]);
+        else if(method.equals("GET")&&path.matches("/api/attachments/att_[a-zA-Z0-9]+/url"))result=files.previewUrl(path.split("/")[3]);
+        else if(method.equals("GET")&&path.matches("/api/attachments/att_[a-zA-Z0-9]+"))return files.preview(path.split("/")[3]);
+        else if(method.equals("GET")&&path.matches("/api/device/attachments/att_[a-zA-Z0-9]+/url"))result=files.downloadUrl(path.split("/")[4],deviceId);
         else if(method.equals("POST")&&path.equals("/api/images/uploads"))result=images.initiate(body);
         else if(method.equals("POST")&&path.matches("/api/images/uploads/upl_[a-zA-Z0-9]+/complete"))result=images.complete(path.split("/")[4]);
         else if(method.equals("GET")&&path.matches("/api/images/img_[a-zA-Z0-9]+"))return images.preview(path.split("/")[3]);

@@ -330,7 +330,7 @@ final class Store {
             String id = text(j.get("id")); double created = number(j.get("created_at"));
             var payload=object(decode(j.get("payload")));
             payloads.put(id,payload);
-            relayMessages.add(map("id",id+":user","role","user","content",payload.get("prompt"),"images",payload.getOrDefault("images",List.of()),"created_at",created,"job_id",id,"status",j.get("status"),"error",j.get("error")));
+            relayMessages.add(map("id",id+":user","role","user","content",payload.get("prompt"),"images",payload.getOrDefault("images",List.of()),"files",payload.getOrDefault("files",List.of()),"created_at",created,"job_id",id,"status",j.get("status"),"error",j.get("error")));
             if(truth(payload.get("steered")) && text(j.get("output")).isEmpty())suppressed.add(id+":assistant");
             else relayMessages.add(map("id",id+":assistant","role","assistant","content",j.get("output"),"segments",assistantSegments(j,messages,assistantCopies,current),"diagnostics",j.get("diagnostics"),"created_at",outputTime(j,0,created+0.000001),"job_id",id,"status",j.get("status"),"error",j.get("error")));
             if (!TERMINAL.contains(j.get("status"))) active.add(map("id",id,"status",j.get("status")));
@@ -382,9 +382,27 @@ final class Store {
         String nativeText = content.strip();
         if (prompt.isEmpty()) return false;
         if (prompt.equals(nativeText)) return true;
-        var images = list(payload.getOrDefault("images",List.of()),4);
-        if (images.isEmpty() || !nativeText.startsWith(prompt+"\n")) return false;
+        if (!nativeText.startsWith(prompt+"\n")) return false;
         String suffix = nativeText.substring(prompt.length()).strip();
+        var files = list(payload.getOrDefault("files",List.of()),8);
+        if (!files.isEmpty()) {
+            String open="[Relay attachments]\n",close="\n[/Relay attachments]";
+            if(!suffix.startsWith(open))return false;
+            int end=suffix.indexOf(close,open.length());
+            if(end<0)return false;
+            try {
+                var refs=list(json.readValue(suffix.substring(open.length(),end),Object.class),8);
+                if(refs.size()!=files.size())return false;
+                for(int i=0;i<files.size();i++) {
+                    var file=object(files.get(i));var ref=object(refs.get(i));
+                    if(!file.get("id").equals(ref.get("id"))||!file.get("name").equals(ref.get("name"))||
+                        !text(ref.get("path")).endsWith("/attachments/"+text(file.get("id"))+"/"+text(file.get("name"))))return false;
+                }
+            } catch(Exception e) {return false;}
+            suffix=suffix.substring(end+close.length()).strip();
+            if(suffix.isEmpty())return true; // Claude stores visual inputs outside the text part.
+        }
+        var images = list(payload.getOrDefault("images",List.of()),4);
         for (int i=0; i<images.size(); i++) {
             var image = object(images.get(i));
             var match = NATIVE_IMAGE.matcher(suffix);
@@ -504,14 +522,15 @@ final class Store {
             }
         }
     }
-    Map<String,Object> createJob(Map<String,Object> body,List<Object> attachments) {
+    Map<String,Object> createJob(Map<String,Object> body,List<Object> attachments,List<Object> files) {
         String kind = required(body,"kind",20), agentId = null, deviceId; Map<String,Object> payload;
         if (kind.equals("prompt")) {
             var a = agent(required(body,"agent"));
             if (!truth(a.get("controllable"))) throw new ApiException(409,"此会话当前无法执行：工作目录不可用或缺少对应 CLI");
             deviceId = text(a.get("device_id")); agentId = text(a.get("id"));
             String prompt=text(body.getOrDefault("prompt",""));
-            if(prompt.isBlank()&&!attachments.isEmpty())prompt="请查看这些图片。";
+            if(prompt.isBlank()&&!files.isEmpty())prompt="请查看这些附件。";
+            else if(prompt.isBlank()&&!attachments.isEmpty())prompt="请查看这些图片。";
             int timeout=integer(body.getOrDefault("timeout",0),0,1800,"timeout");
             var caps=object(decode(device(deviceId).get("capabilities")));
             if(timeout==0&&!truth(caps.get("unlimited_tasks")))throw new ApiException(409,"目标设备仍有旧版执行时限，请升级 Relay CLI 至 0.6.1 并重启后台进程");
@@ -524,6 +543,7 @@ final class Store {
                 payload.put("permission_mode",mode);
             }
             if(!attachments.isEmpty())payload.put("images",attachments);
+            if(!files.isEmpty())payload.put("files",files);
         } else if (kind.equals("directory_list")) {
             var d=device(required(body,"device"));
             if(!truth(object(decode(d.get("capabilities"))).get("directory_browser")))throw new ApiException(409,"请升级目标设备 Relay CLI 至 0.6.8 并重启，以浏览目录");
@@ -538,6 +558,7 @@ final class Store {
         else throw new ApiException("未知任务类型");
         String id = id("job"); update("INSERT INTO jobs(id,device_id,agent_id,kind,payload,status,output,created_at) VALUES(?,?,?,?,?,'queued','',?)",id,deviceId,agentId,kind,encode(payload),now());
         for(Object value:attachments)storeImageJob(object(value),id);
+        for(Object value:files)update("UPDATE attachments SET job_id=? WHERE id=? AND owner_user_id=? AND job_id IS NULL",id,object(value).get("id"),owner());
         return job(id);
     }
     Map<String,Object> approval(String jobId,String approvalId,String deviceId) {

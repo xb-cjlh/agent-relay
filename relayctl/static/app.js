@@ -10,6 +10,7 @@ const icons = {
   right:'<path d="m9 5 7 7-7 7"/>',
   up:'<path d="M12 19V5m-5 5 5-5 5 5"/>', down:'<path d="M12 5v14m-5-5 5 5 5-5"/>',
   stop:'<rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/>',
+  attachment:'<path d="m21 11-9 9a6 6 0 0 1-8.5-8.5l10-10a4 4 0 0 1 5.7 5.7l-10 10a2 2 0 0 1-2.8-2.8l9-9"/>',
   image:'<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 6-6 4 4 3-3 5 5"/>',
   key:'<circle cx="8" cy="8" r="4"/><path d="m11 11 9 9m-4-4 3-3m-6 0 3-3"/>',
   agent:'<rect x="4" y="6" width="16" height="14" rx="4"/><path d="M12 3v3M8 11v2m8-2v2m-8 4h8"/>',
@@ -24,10 +25,10 @@ const size = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MiB' : n >= 1024 ?
 const terminal = new Set(['succeeded','failed','cancelled']);
 let signedIn = false;
 let currentUser = null;
-const imageDrafts = new Map();
+const attachmentDrafts = new Map();
 const imageUrls = new Map();
-let uploadingImages = 0;
-const imageUploads = new Set();
+let uploadingAttachments = 0;
+const attachmentUploads = new Set();
 let state = {devices:[], agents:[], jobs:[], artifacts:[]};
 let selected = sessionStorage.getItem('relay-selected') || '';
 let deviceFilter = sessionStorage.getItem('relay-device-filter') || '';
@@ -79,10 +80,10 @@ async function logout(localOnly=false) {
   clearDiagrams();
   closeFilePreview(false);
   clearFilePreviewCache(cacheOwner);
-  for (const upload of imageUploads) upload.abort();
+  for (const upload of attachmentUploads) upload.abort();
   for (const key of Object.keys(sessionStorage)) if (key.startsWith('relay-')) sessionStorage.removeItem(key);
   sessionRevision++; refreshRequest++; refreshing = false; sessionRows = []; sessionThrough = sessionCursor = null; sessionHasMore = false; sessionLoading = true; sessionMoreLoading = false; sessionError = false;
-  selected = ''; deviceFilter = ''; sessionOrganization = 'time'; activeDirectory = ''; directoryExpanded = true; drafts.clear(); imageDrafts.clear(); imageUrls.clear(); messages.clear(); activeJobs=[]; approvals=[]; renderApprovals(); state={devices:[],agents:[],jobs:[],artifacts:[]};
+  selected = ''; deviceFilter = ''; sessionOrganization = 'time'; activeDirectory = ''; directoryExpanded = true; drafts.clear(); attachmentDrafts.clear(); imageUrls.clear(); messages.clear(); activeJobs=[]; approvals=[]; renderApprovals(); state={devices:[],agents:[],jobs:[],artifacts:[]};
   showScreen('login');
   $('new-key-secret').textContent = ''; $('new-key').hidden = true;
   $('key-list').replaceChildren(); $('messages').replaceChildren(); $('attachment-list').replaceChildren();
@@ -356,9 +357,9 @@ function renderHeader() {
   $('permission-note').hidden = mode.hidden || mode.value === 'device';
   $('permission-note').textContent = mode.value === 'full' ? '完全访问：允许以设备用户权限访问文件和网络，不再逐项审批。仅对随后发送的消息生效。' : (agent?.kind === 'claude' ? '按需审批：遵循 Claude 本机权限规则，需要确认的工具调用会显示在此处。' : '按需审批：项目内操作可直接执行，需要额外权限时在此确认。');
   $('prompt').disabled = !agent || !!readOnly;
-  $('send-button').disabled = sending || uploadingImages > 0 || !agent || readOnly || upgradeRequired || (!$('prompt').value.trim() && !(imageDrafts.get(selected)?.length));
-  $('attach-image').disabled = sending || uploadingImages > 0 || !agent || readOnly || !device?.capabilities.image_input;
-  $('attach-image').title = device?.capabilities.image_input ? '添加图片' : '请升级目标设备 Relay 至 0.5.0 并重启，以发送图片';
+  $('send-button').disabled = sending || uploadingAttachments > 0 || !agent || readOnly || upgradeRequired || (!$('prompt').value.trim() && !(attachmentDrafts.get(selected)?.length));
+  $('attach-image').disabled = sending || uploadingAttachments > 0 || !agent || readOnly || !(device?.capabilities.image_input || device?.capabilities.file_input);
+  $('attach-image').title = device?.capabilities.file_input ? '添加附件（单文件最大 16 MiB，每条最多 8 个）' : device?.capabilities.image_input ? '可添加图片；发送其他文件需升级目标设备 Relay 至 0.6.9 并重启' : '请升级目标设备 Relay 至 0.6.9 并重启，以发送附件';
   renderAttachments();
   $('stop-generation').hidden = !activeJobs.some(j => j.status === 'running');
   const queued = activeJobs.filter(j => j.status === 'queued').length;
@@ -511,6 +512,7 @@ function renderMessages() {
         else if (['running','cancelling'].includes(message.status)) text = `<span class="typing">${message.status === 'cancelling' ? '正在停止…' : '正在回复…'}</span>`;
         else text = message.status === 'failed' ? '' : message.status === 'cancelled' ? '已停止。' : '本轮已结束，没有文本输出。';
         if (message.role === 'user' && message.images?.length) text += `<div class="message-images">${message.images.map(img => `<a href="/api/images/${encodeURIComponent(img.id)}" data-view-image="${esc(img.id)}" target="_blank" rel="noopener noreferrer"><img data-image-id="${esc(img.id)}" alt="${esc(img.name)}" loading="lazy" crossorigin="anonymous" referrerpolicy="no-referrer"></a>`).join('')}</div>`;
+        if (message.role === 'user' && message.files?.length) text += `<div class="message-files">${message.files.map(file=>`<a class="file-attachment" href="/api/attachments/${encodeURIComponent(file.id)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="下载 ${esc(file.name)}"><span class="attachment-name">${esc(file.name)}</span><small>${size(file.size)} · 下载</small></a>`).join('')}</div>`;
         if (message.role === 'user') return `<div class="message-body">${text}</div>`;
         return `<section class="message-part"><div class="message-byline">${icon('agent')}<span>${kindName(agent?.kind)}</span><time>${date(part.created_at)}</time></div><div class="message-body">${text}</div></section>`;
       }).join('');
@@ -715,12 +717,12 @@ $('prompt').addEventListener('keydown',e => {
 });
 $('send-form').addEventListener('submit',async e => {
   e.preventDefault();
-  const text = $('prompt').value.trim(), id = selected, images = [...(imageDrafts.get(selected)||[])];
-  if ((!text && !images.length) || uploadingImages || !id || sending || $('prompt').disabled) return;
+  const text = $('prompt').value.trim(), id = selected, attachments = [...(attachmentDrafts.get(selected)||[])];
+  if ((!text && !attachments.length) || uploadingAttachments || !id || sending || $('prompt').disabled) return;
   sending = true; renderHeader();
   try {
-    await api('jobs',{kind:'prompt',agent:id,prompt:text,images:images.map(img=>img.id),permission_mode:$('permission-mode').hidden ? 'device' : $('permission-mode').value});
-    imageDrafts.set(id,(imageDrafts.get(id)||[]).filter(img=>!images.some(sent=>sent.id===img.id)));
+    await api('jobs',{kind:'prompt',agent:id,prompt:text,images:attachments.filter(isImageAttachment).map(item=>item.id),files:attachments.filter(item=>!isImageAttachment(item)).map(item=>item.id),permission_mode:$('permission-mode').hidden ? 'device' : $('permission-mode').value});
+    attachmentDrafts.set(id,(attachmentDrafts.get(id)||[]).filter(img=>!attachments.some(sent=>sent.id===img.id)));
     if (selected === id && $('prompt').value.trim() === text) { $('prompt').value = ''; drafts.delete(id); sessionStorage.removeItem('relay-draft:' + id); }
     if (selected === id) { await loadConversation(); scrollBottom(); if (!matchMedia('(pointer: coarse)').matches) $('prompt').focus(); }
     refresh();
@@ -763,7 +765,7 @@ document.addEventListener('click',async e => {
       $('image-title').textContent=img.alt;$('image-view').replaceChildren(img);
       $('image-dialog').showModal();loadImages($('image-view'));
     }
-    if (target.dataset.removeImage) {imageDrafts.set(selected,(imageDrafts.get(selected)||[]).filter(img=>img.id!==target.dataset.removeImage));renderHeader();}
+    if (target.dataset.removeImage) {attachmentDrafts.set(selected,(attachmentDrafts.get(selected)||[]).filter(img=>img.id!==target.dataset.removeImage));renderHeader();}
     if (target.dataset.agent) selectAgent(target.dataset.agent);
     if (target.dataset.viewDevice) {
       setDeviceFilter(target.dataset.viewDevice); $('devices-dialog').close();
@@ -781,13 +783,14 @@ $('connect-code').textContent = `请阅读 ${location.origin}/install-agent.md�
 if (selected) $('prompt').value = sessionStorage.getItem('relay-draft:' + selected) || '';
 setInterval(() => { if (!document.hidden) refresh(); },1000);
 
+const isImageAttachment = item => item.id.startsWith('img_');
 function renderAttachments() {
-  const images = imageDrafts.get(selected) || [];
-  const signature = JSON.stringify(images);
-  const list = $('attachment-list'); list.hidden = images.length === 0;
+  const attachments = attachmentDrafts.get(selected) || [];
+  const signature = JSON.stringify(attachments);
+  const list = $('attachment-list'); list.hidden = attachments.length === 0;
   if (list.dataset.signature === signature) return;
   list.dataset.signature = signature;
-  list.innerHTML = images.map(img=>`<div class="attachment"><img data-image-id="${esc(img.id)}" alt="${esc(img.name)}" crossorigin="anonymous" referrerpolicy="no-referrer"><button type="button" data-remove-image="${esc(img.id)}" aria-label="移除 ${esc(img.name)}">×</button></div>`).join('');
+  list.innerHTML = attachments.map(item=>`<div class="attachment${isImageAttachment(item)?'':' file-attachment'}" title="${esc(item.name)}">${isImageAttachment(item)?`<img data-image-id="${esc(item.id)}" alt="${esc(item.name)}" crossorigin="anonymous" referrerpolicy="no-referrer">`:`<span class="attachment-name">${esc(item.name)}</span><small>${size(item.size)}</small>`}<button type="button" data-remove-image="${esc(item.id)}" aria-label="移除 ${esc(item.name)}">×</button></div>`).join('');
   loadImages(list);
 }
 
@@ -823,36 +826,49 @@ async function loadImage(img,retried=false) {
     if(account===generation) {imageUrls.delete(id);img.title='图片暂时无法加载，请刷新页面重试';}
   }
 }
-async function addImages(files) {
+async function addAttachments(files) {
   const id=selected, account=generation;
   if (!id || $('attach-image').disabled) return;
-  const list=[...files].filter(file=>file.type.startsWith('image/'));
+  const list=[...files], device=state.devices.find(d=>d.id===state.agents.find(a=>a.id===id)?.device_id);
   if (!list.length) return;
-  if ((imageDrafts.get(id)?.length||0)+list.length>4) {toast('每条消息最多 4 张图片');return;}
-  uploadingImages++; renderHeader();
-  const controller=new AbortController();imageUploads.add(controller);
+  if ((attachmentDrafts.get(id)?.length||0)+list.length>8) {toast('每条消息最多 8 个附件，其中图片最多 4 张');return;}
+  if (!device?.capabilities.file_input && list.some(file=>!RelayImages.isImage(file))) {toast('发送文件需要将目标设备 Relay 升级至 0.6.9 并重启后台进程');return;}
+  uploadingAttachments++; renderHeader();
+  const controller=new AbortController();attachmentUploads.add(controller);
   const timeout=setTimeout(()=>controller.abort(),120000);
   try {
     for (const file of list) {
-      const prepared=await RelayImages.prepare(file,controller.signal);
+      let image=RelayImages.isImage(file),prepared;
+      if (image) {
+        try {prepared=await RelayImages.prepare(file,controller.signal);}
+        catch(error) {
+          if (error.name==='AbortError' || !device?.capabilities.file_input) throw error;
+          // Unsupported raster formats can still be sent as original files.
+          image=false;
+        }
+      }
+      if (!image) prepared=await RelayImages.prepareFile(file,controller.signal);
       if(account!==generation) return;
-      const current=imageDrafts.get(id)||[];
-      if(current.reduce((sum,img)=>sum+img.size,0)+prepared.size>12*1024*1024)throw new Error('每条消息的图片合计最大 12 MiB');
-      const image=await RelayImages.upload(prepared,async(path,body)=>{
+      const current=attachmentDrafts.get(id)||[],images=current.filter(isImageAttachment);
+      if(image && images.length>=4)throw new Error('每条消息最多 4 张图片');
+      if(image && images.reduce((sum,item)=>sum+item.size,0)+prepared.size>12*1024*1024)throw new Error('每条消息的图片合计最大 12 MiB');
+      if(current.reduce((sum,item)=>sum+item.size,0)+prepared.size>32*1024*1024)throw new Error('每条消息的附件合计最大 32 MiB');
+      const attachment=await RelayImages.upload(prepared,async(path,body)=>{
         if(account!==generation)throw new DOMException('账号已退出','AbortError');
         return api(path,body);
-      },controller.signal);
+      },controller.signal,image?'images':'attachments');
       if(account!==generation) return;
-      imageDrafts.set(id,[...current,image]);renderAttachments();
+      attachmentDrafts.set(id,[...current,attachment]);renderAttachments();
     }
-  } catch(error) {if(account===generation)toast(error.name==='AbortError'?'图片上传已取消或超时，请重试':error.message);}
-  finally {clearTimeout(timeout);imageUploads.delete(controller);uploadingImages--;renderHeader();}
+  } catch(error) {if(account===generation)toast(error.name==='AbortError'?'附件上传已取消或超时，请重试':error.message);}
+  finally {clearTimeout(timeout);attachmentUploads.delete(controller);uploadingAttachments--;renderHeader();}
 }
 $('attach-image').addEventListener('click',()=>$('image-input').click());
-$('image-input').addEventListener('change',()=>{addImages($('image-input').files);$('image-input').value='';});
-$('prompt').addEventListener('paste',e=>{const images=[...(e.clipboardData?.files||[])].filter(f=>f.type.startsWith('image/'));if(images.length){e.preventDefault();addImages(images);}});
+$('image-input').addEventListener('change',()=>{addAttachments($('image-input').files);$('image-input').value='';});
+$('prompt').addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])];if(files.length){e.preventDefault();addAttachments(files);}});
 $('send-form').addEventListener('dragover',e=>{if(e.dataTransfer?.types.includes('Files'))e.preventDefault();});
-$('send-form').addEventListener('drop',e=>{if(e.dataTransfer?.files.length){e.preventDefault();addImages(e.dataTransfer.files);}});
+$('send-form').addEventListener('drop',e=>{if(e.dataTransfer?.files.length){e.preventDefault();addAttachments(e.dataTransfer.files);}});
+
 function updateViewport() {
   if(!matchMedia('(max-width: 760px)').matches) return;
   const viewport=window.visualViewport;

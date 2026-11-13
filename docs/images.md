@@ -1,6 +1,18 @@
-# OSS 图片上传与预览
+# OSS 附件上传与图片预览
 
 会话图片保存在私有阿里云 OSS。浏览器先压缩图片，通过后端签发的 OSS V4 PUT 地址直传，后端只接收摘要和大小等 JSON 元数据，通过 HEAD 核验后登记。页面预览和查看原图使用短期 GET 签名直连 OSS，图片内容不经过 Relay 服务端。OSS 长期凭据仅保存在服务端。
+
+## 任意文件（CLI 0.6.9）
+
+会话输入框的附件按钮支持任意文件，也支持粘贴和拖入文件。每条消息最多 8 个附件，其中原生图片最多 4 张；普通文件单个最大 16 MiB，附件合计最大 32 MiB。PDF、Office、压缩包、代码、文本和空文件保留原始字节；浏览器可解码的常见图片仍走下方的压缩及原生图片输入流程，无法解码的图片作为原文件发送。
+
+普通文件使用 `POST /api/attachments/uploads` 和 `/api/attachments/uploads/:uploadId/complete`，同样签发 5 分钟 PUT、15 分钟内 HEAD 确认，校验大小、MD5 和 SHA-256 元数据。上传 MIME 固定为 `application/octet-stream`。发送时只传 `files: ["att_..."]`，支持与 `images` 混合发送。每个账号每日最多申请 200 个普通文件、512 MiB，同时待完成最多 20 个；单独计入文件配额。未发送文件草稿上传后保留 24 小时，之后在下一次上传时清理；已发送文件保留。
+
+消息中的文件卡片显示名称、大小，点击下载原文件。`GET /api/attachments/:id/url` 返回短期 OSS GET 地址，稳定入口 `/api/attachments/:id` 鉴权后 302 跳转；签名强制 attachment 下载，不在网页执行 HTML、SVG 等文件。浏览器与目标设备均直接读取 OSS，文件字节不经过 Relay。用户只能访问自己的附件；`GET /api/device/attachments/:id/url` 仅向该条消息分配的设备签发下载地址，设备校验实际大小和 SHA-256 后落盘。
+
+目标设备需要 CLI **0.6.9** 并重启后台进程。文件保存到 `~/.config/agent-manager/devices/<设备标识>/attachments/<附件 ID>/<文件名>`（`AM_CONFIG_DIR` 可改变配置目录），每个附件独立目录，目录 `0700`、文件 `0600`，原子写入；跨轮次与重启保留，目前不自动清理。名称中的路径和控制字符会被清理。Relay 将本地路径交给 Codex / Claude，由 agent 使用文件工具读取；文件格式的解析能力取决于对应 agent 和设备已安装的工具。Relay 不自动解压或执行附件。图片功能继续兼容旧版设备。
+
+升级命令见 [安装文档](https://relay.chaojibot.com/docs/install.md)。
 
 ## 压缩
 

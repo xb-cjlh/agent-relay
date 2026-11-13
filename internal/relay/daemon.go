@@ -208,7 +208,7 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 		scope = "roots"
 	}
 	// Folder browsing is a small read-only control task, independent of model turns.
-	caps := M{"codex": codexErr == nil, "claude": claudeErr == nil, "writable": writable, "discovery_scope": scope, "access_scope": "user", "home": home, "relay_version": Version, "image_input": true, "codex_permissions": true, "claude_permissions": true, "unlimited_tasks": true, "conditional_files": true, "direct_file_upload": true, "session_titles": true, "codex_steering": true}
+	caps := M{"codex": codexErr == nil, "claude": claudeErr == nil, "writable": writable, "discovery_scope": scope, "access_scope": "user", "home": home, "relay_version": Version, "image_input": true, "file_input": true, "codex_permissions": true, "claude_permissions": true, "unlimited_tasks": true, "conditional_files": true, "direct_file_upload": true, "session_titles": true, "codex_steering": true}
 	discoveryRoots := roots
 	caps["directory_browser"] = true
 	// Legacy roots is a compatibility field for old servers, not a user setting.
@@ -306,6 +306,7 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 				}
 				t.client = client
 				t.imageDir = filepath.Join(canonical, "images")
+				t.attachmentDir = filepath.Join(canonical, "attachments")
 				tasks[id] = t
 				go t.run([]string{base}, writable)
 			}
