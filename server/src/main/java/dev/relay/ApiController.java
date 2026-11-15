@@ -16,7 +16,8 @@ final class ApiController {
     private final AuthService auth;
     private final ImageStore images;
     private final AttachmentStore files;
-    ApiController(Store store, PublicContent content,AuthService auth,ImageStore images,AttachmentStore files) { this.store=store; this.content=content;this.auth=auth;this.images=images;this.files=files; }
+    private final ShareStore shares;
+    ApiController(Store store, PublicContent content,AuthService auth,ImageStore images,AttachmentStore files,ShareStore shares) { this.store=store; this.content=content;this.auth=auth;this.images=images;this.files=files;this.shares=shares; }
 
     @RequestMapping("/**")
     ResponseEntity<?> handle(HttpServletRequest request) throws Exception {
@@ -27,6 +28,17 @@ final class ApiController {
             return content.get(path,method.equals("HEAD"));
         }
         synchronized (store) {
+          if(path.startsWith("/api/shared/")) {
+            if(!method.equals("GET"))throw new ApiException(405,"分享仅支持查看");
+            try(Store.Transaction tx=store.transaction()) {
+                var share=shares.resolve(request.getHeader("Authorization"),path.equals("/api/shared/conversation"));Object result;
+                if(path.equals("/api/shared/conversation"))result=shares.view(share,request.getParameter("before"));
+                else if(path.matches("/api/shared/images/img_[a-zA-Z0-9]+/url"))result=shares.resource(share,path.split("/")[4],true);
+                else if(path.matches("/api/shared/attachments/att_[a-zA-Z0-9]+/url"))result=shares.resource(share,path.split("/")[4],false);
+                else throw new ApiException(404,"接口不存在");
+                tx.commit();return ResponseEntity.ok(result);
+            }
+          }
           Map<String,Object> body=Map.of();
           if(method.equals("POST")) {
             if(request.getContentLengthLong()>MAX_BODY)throw new ApiException(413,"请求体超过大小限制");
@@ -65,6 +77,9 @@ final class ApiController {
         else if (method.equals("POST") && path.equals("/api/devices/merge")) result=store.mergeDevices(body);
         else if (method.equals("POST") && path.equals("/api/agents")) result=store.createAgent(body);
         else if (method.equals("GET") && path.matches("/api/agents/[^/]+/messages")) result=store.conversation(path.split("/")[3],cursor);
+        else if (method.equals("POST") && path.matches("/api/agents/[^/]+/shares")) result=shares.create(path.split("/")[3],body);
+        else if (method.equals("GET") && path.matches("/api/agents/[^/]+/shares")) result=shares.listShares(path.split("/")[3]);
+        else if (method.equals("POST") && path.matches("/api/shares/shr_[a-zA-Z0-9]+/revoke")) result=shares.revoke(path.split("/")[3]);
         else if (method.equals("POST") && path.equals("/api/jobs")) {
             List<Object> attachments=List.of(),uploadedFiles=List.of();
             if(body.containsKey("images")||body.containsKey("files")) {

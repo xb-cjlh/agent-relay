@@ -277,3 +277,14 @@ rm "$HOME/.local/bin/relayctl"
 ## 服务端邮件设置
 
 注册和密码重置依赖 SMTP。部署者在 Relay 独立配置中设置 `relay.mail.from`、`spring.mail.host`、`spring.mail.port`、`spring.mail.username`、`spring.mail.password`，以及 `spring.mail.properties.mail.smtp.auth/starttls.enable/starttls.required/ssl.enable`。HTTPS 部署还需设置 `relay.auth.public-origin=https://relay.chaojibot.com` 和 `relay.auth.secure-cookie=true`。邮件主题为 Relay，不读取或复用其他应用的用户表、验证码、Cookie 或 SK。
+
+
+## 会话分享
+
+会话右上角点击「分享会话」，选择 1 小时、1 天、7 天（默认）或 30 天有效期，生成并复制免登录分享链接。分享是生成时的只读快照，包含当时已同步的全部会话消息和已上传图片、文件附件，后续新增消息不会公开；正在生成的回复只包含当时已有内容。可在同一弹窗中撤销已有链接，需要更新内容时重新生成。
+
+接收方可在电脑或手机浏览器直接打开，支持 Markdown、Mermaid 图表、图片查看和附件下载，长会话可加载更早消息；不能发送指令、审批操作或访问其他会话。回复中指向设备本地文件的 Markdown 链接不包含在分享中，需要分享文件时先上传为消息附件。
+
+链接中的分享 token 是此份快照的访问凭据，请仅发送给预期接收者。有效期结束或撤销后停止访问与签发附件地址；已经取得的 OSS 地址最多还能使用 5 分钟，并且不超过分享的到期时间，已下载的内容无法收回。完整 token 仅在生成时显示，服务端只保存 SHA-256 摘要；链接使用 `/share#shr-relay_...`，浏览器通过请求头提交 token，不将其放入请求路径或查询参数，分享页面不被搜索引擎索引。
+
+分享数据与账号隔离，服务重启后仍有效。每个账号最多 50 个有效分享、合计 64 MiB 快照；单份最多 5000 条消息、8 MiB，超限时会提示而不会静默丢弃旧消息。撤销会清空快照及附件引用，到期快照在该账号下次生成分享时清理。本功能只需更新服务端，无需升级设备端 CLI。

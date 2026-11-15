@@ -36,7 +36,7 @@
 </div></aside>
 <button id="sidebar-backdrop" class="sidebar-backdrop" aria-label="关闭会话列表" hidden></button>
 <main class="conversation">
-<header class="conversation-header"><button id="open-sidebar" class="icon-button mobile-only" aria-label="打开会话列表"><span data-icon="menu"></span></button><div class="conversation-heading"><div class="conversation-title-row"><h1 id="conversation-title">会话</h1><span id="conversation-kind" class="agent-badge" hidden></span></div><div id="conversation-meta" class="conversation-meta"></div></div><span id="conversation-status" class="conversation-status"></span></header>
+<header class="conversation-header"><button id="open-sidebar" class="icon-button mobile-only" aria-label="打开会话列表"><span data-icon="menu"></span></button><div class="conversation-heading"><div class="conversation-title-row"><h1 id="conversation-title">会话</h1><span id="conversation-kind" class="agent-badge" hidden></span></div><div id="conversation-meta" class="conversation-meta"></div></div><span id="conversation-status" class="conversation-status"></span><button id="share-conversation" class="icon-button" type="button" aria-label="分享会话" title="分享会话" hidden><span data-icon="share"></span></button></header>
 <div id="empty-conversation" class="empty-conversation"><img src="/favicon.svg" alt="" width="42" height="42"><h2>继续一个对话。</h2><p id="empty-description">选择已有会话，或在任意设备上新建会话。</p><button id="empty-new-agent" class="button secondary"><span data-icon="plus"></span>新会话</button></div>
 <div id="thread" class="thread" hidden>
 <div id="message-scroll" class="message-scroll" tabindex="0" aria-label="会话消息"><div class="message-column"><button id="load-older" class="load-older" hidden>加载更早的消息</button><div id="messages" role="log" aria-label="消息记录" aria-live="off"></div><div id="thread-empty" class="thread-empty" hidden>发一条消息，开始这个会话。</div></div></div>
@@ -67,6 +67,11 @@
 
 </div></dialog>
 <dialog id="image-dialog" class="image-dialog" aria-labelledby="image-title"><div class="dialog-content"><div class="dialog-heading"><h2 id="image-title">图片</h2><button type="button" class="icon-button" data-close="image-dialog" aria-label="关闭图片"><span data-icon="close"></span></button></div><div id="image-view"></div></div></dialog>
+<dialog id="share-dialog" aria-labelledby="share-title"><div class="dialog-content"><div class="dialog-heading"><h2 id="share-title">分享会话</h2><button type="button" class="icon-button" data-close="share-dialog" aria-label="关闭分享">×</button></div>
+<p class="account-help">生成当前会话的只读快照，包含消息和上传附件。持有链接的人无需登录即可查看，后续新消息不会加入分享。</p>
+<form id="share-form"><label for="share-duration">链接有效期</label><select id="share-duration"><option value="3600">1 小时</option><option value="86400">1 天</option><option value="604800" selected>7 天</option><option value="2592000">30 天</option></select><button class="button primary" type="submit">生成分享链接</button></form>
+<div id="share-result" hidden><label for="share-link">分享链接（关闭后不再显示）</label><div class="file-input-row"><input id="share-link" readonly><button id="copy-share" type="button" class="button secondary">复制</button></div><p id="share-result-note" class="account-help"></p></div>
+<div id="share-list" aria-live="polite"></div></div></dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>

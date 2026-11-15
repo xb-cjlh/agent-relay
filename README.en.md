@@ -368,3 +368,6 @@ Since CLI 0.5.3, original images are stored persistently in the target device's 
 ## License
 
 Relay is released under the [MIT License](LICENSE). Third-party dependencies and bundled browser libraries retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).
+
+
+Use **Share conversation** in the conversation header to create an anonymous, read-only link valid for 1 hour, 1 day, 7 days, or 30 days. Links can be revoked. Each share captures the messages and uploaded attachments at creation time; later messages remain private. Readers can view Markdown, Mermaid diagrams and images, and download included files. The complete token is shown only when created; the database stores its hash. Device-local Markdown file links are excluded. Previously signed OSS URLs may remain usable for up to 5 minutes after revocation, capped by the share expiry. No device CLI update is required.

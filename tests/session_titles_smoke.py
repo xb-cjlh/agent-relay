@@ -26,6 +26,11 @@ def main():
             with sync_playwright() as p:
                 for name,engine in [('Chromium',p.chromium),('WebKit',p.webkit)]:
                     directory=root/name;project=directory/'backend';project.mkdir(parents=True)
+                    # Discovery needs CLI executables even on clean CI runners.
+                    # This fixture only synchronizes titles and must never invoke a model.
+                    bindir=directory/'bin';bindir.mkdir()
+                    for cli in ('codex','claude'):
+                        executable=bindir/cli;executable.write_text('#!/bin/sh\nexit 0\n');executable.chmod(0o755)
                     codex=directory/'codex';claude=directory/'claude'
                     sid='codex-'+name;csid='claude-'+name
                     write_records(codex/'sessions'/'native.jsonl',codex_records(project,sid))
@@ -35,7 +40,7 @@ def main():
                     write_records(transcript,[{'type':'user','sessionId':csid,'cwd':str(project),'uuid':'question-'+name,'message':{'content':'fixture question'}},
                         {'type':'assistant','sessionId':csid,'cwd':str(project),'uuid':'answer-'+name,'message':{'content':'fixture answer','stop_reason':'end_turn'}},
                         {'type':'ai-title','sessionId':csid,'aiTitle':'优化会话列表'}])
-                    env=dict(os.environ,AM_CONFIG_DIR=str(directory/'config'),CODEX_HOME=str(codex),CLAUDE_CONFIG_DIR=str(claude))
+                    env=dict(os.environ,PATH=str(bindir)+os.pathsep+os.environ.get('PATH',''),AM_CONFIG_DIR=str(directory/'config'),CODEX_HOME=str(codex),CLAUDE_CONFIG_DIR=str(claude))
                     daemon=subprocess.Popen([binary(),'--server',base,'--token',TOKEN,'daemon','run','--virtual-device','--name','titles-'+name,
                         '--root',str(directory),'--state-dir',str(directory/'state'),'--interval','0.1'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
                     daemons.append(daemon)

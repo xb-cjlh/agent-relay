@@ -298,6 +298,12 @@ html { -webkit-text-size-adjust: 100%; }
 .file-attachment .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-attachment small { opacity: .65; font-size: 11px; }
 .message-files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+#share-form { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 22px 0; }
+#share-form label { margin: 0; }
+#share-result { margin-bottom: 20px; }
+#share-link { min-width: 0; font-size: 16px; }
+.share-entry { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 14px 0; border-top: 1px solid var(--line); font-size: 12px; }
+.share-entry small { color: var(--muted); }
 .message-images { margin: 8px 0; }
 .message-images img { max-width: 220px; max-height: 220px; width: auto; object-fit: contain; border-radius: 8px; border: 1px solid var(--line); }
 .image-dialog { width: 1100px; }

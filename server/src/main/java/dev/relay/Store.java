@@ -314,6 +314,9 @@ final class Store {
         return agent(id);
     }
     Map<String,Object> conversation(String ref, String cursor) {
+        return conversation(ref,cursor,100);
+    }
+    Map<String,Object> conversation(String ref, String cursor,int limit) {
         var agent = agent(ref); var jobs = rows("SELECT * FROM jobs WHERE agent_id=? ORDER BY created_at,id",agent.get("id"));
         var messages = rows("SELECT * FROM messages WHERE agent_id=? AND duplicate_of IS NULL ORDER BY created_at,id",agent.get("id"));
         var suppressed = new ArrayList<String>();
@@ -371,7 +374,7 @@ final class Store {
         }
         var approvals=rows("SELECT p.* FROM job_approvals p JOIN jobs j ON j.id=p.job_id WHERE j.agent_id=? AND p.decision='pending' AND j.status='running' ORDER BY p.created_at LIMIT 32",agent.get("id"));
         for(var approval:approvals)approval.put("details",decode(approval.get("details")));
-        return map("agent",agent,"messages",messages.subList(Math.max(0,messages.size()-100),messages.size()),"has_more",messages.size()>100,"active_jobs",active,"approvals",approvals,"suppressed_message_ids",suppressed);
+        return map("agent",agent,"messages",messages.subList(Math.max(0,messages.size()-limit),messages.size()),"has_more",messages.size()>limit,"active_jobs",active,"approvals",approvals,"suppressed_message_ids",suppressed);
     }
     private static final Pattern NATIVE_IMAGE = Pattern.compile("<image name=\\[Image #(\\d+)\\] path=\"([^\"\\r\\n]+)\">\\s*</image>");
     // Codex serializes attached local images as trailing text in its transcript.
@@ -749,6 +752,7 @@ final class Store {
                     if (!existing.isEmpty()) {
                         Object canonical=existing.get(0).get("id");
                         update("UPDATE jobs SET agent_id=? WHERE agent_id=?",canonical,agent.get("id"));
+                        update("UPDATE conversation_shares SET agent_id=? WHERE agent_id=?",canonical,agent.get("id"));
                         update("UPDATE messages SET agent_id=? WHERE agent_id=?",canonical,agent.get("id"));
                         update("UPDATE agents SET merged_into=? WHERE merged_into=?",canonical,agent.get("id"));
                         update("UPDATE agents SET merged_into=? WHERE id=?",canonical,agent.get("id"));

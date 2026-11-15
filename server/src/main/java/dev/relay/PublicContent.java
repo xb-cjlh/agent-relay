@@ -25,6 +25,8 @@ final class PublicContent {
     ResponseEntity<?> get(String path, boolean head) throws Exception {
         String file=Map.ofEntries(
             Map.entry("/","static/index.html"), Map.entry("/app.js","static/app.js"),
+            Map.entry("/share","static/share.html"), Map.entry("/share/","static/share.html"),
+            Map.entry("/share.js","static/share.js"), Map.entry("/share.css","static/share.css"),
             Map.entry("/account.js","static/account.js"),
             Map.entry("/diagrams.js","static/diagrams.js"), Map.entry("/diagram.html","static/diagram.html"),
             Map.entry("/diagram-renderer.js","static/diagram-renderer.js"), Map.entry("/diagram.css","static/diagram.css"),

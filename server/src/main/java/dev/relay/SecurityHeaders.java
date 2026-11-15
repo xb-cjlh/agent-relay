@@ -15,6 +15,8 @@ final class SecurityHeaders extends OncePerRequestFilter {
             response.setHeader("Cache-Control","no-store");
         response.setHeader("X-Content-Type-Options","nosniff");
         response.setHeader("Referrer-Policy","no-referrer");
+        if(request.getRequestURI().startsWith("/share")||request.getRequestURI().startsWith("/api/shared/"))
+            response.setHeader("X-Robots-Tag","noindex, nofollow, noarchive");
         if (request.getRequestURI().equals("/diagram.html")) {
             // WebKit gives sandboxed documents an opaque origin: 'self' cannot
             // load their static assets. Match the request host explicitly; both

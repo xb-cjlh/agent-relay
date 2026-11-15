@@ -8,6 +8,7 @@ const icons = {
   expand:'<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
   collapse:'<path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/>',
   right:'<path d="m9 5 7 7-7 7"/>',
+  share:'<path d="M12 16V3m-4 4 4-4 4 4M5 12v8h14v-8"/>',
   up:'<path d="M12 19V5m-5 5 5-5 5 5"/>', down:'<path d="M12 5v14m-5-5 5 5 5-5"/>',
   stop:'<rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/>',
   attachment:'<path d="m21 11-9 9a6 6 0 0 1-8.5-8.5l10-10a4 4 0 0 1 5.7 5.7l-10 10a2 2 0 0 1-2.8-2.8l9-9"/>',
@@ -326,6 +327,7 @@ function selectAgent(id,closeSidebar=true,load=true) {
 
 function renderHeader() {
   const agent = state.agents.find(a => a.id === selected);
+  $('share-conversation').hidden = !agent;
   const device = state.devices.find(d => d.id === agent?.device_id);
   const filteredDevice = state.devices.find(d => d.id === deviceFilter);
   $('empty-description').textContent = filteredDevice ? `${filteredDevice.name} 还没有同步到会话。可在这台设备上新建会话，或切换其他设备。` : '选择已有会话，或在任意设备上新建会话。';
@@ -882,3 +884,39 @@ window.visualViewport?.addEventListener('scroll',updateViewport);
 window.addEventListener('resize',updateViewport);
 document.addEventListener('focusin',()=>requestAnimationFrame(updateViewport));
 updateViewport();
+
+let shareAgent='',shareRequest=0;
+async function loadShares() {
+  const id=shareAgent,request=++shareRequest,account=generation;
+  const result=await api(`agents/${encodeURIComponent(id)}/shares`);
+  if(id!==shareAgent||request!==shareRequest||account!==generation)return;
+  const active=result.shares.filter(share=>!share.revoked_at&&share.expires_at*1000>Date.now());
+  $('share-list').innerHTML=active.length?active.map(share=>`<div class="share-entry"><span>${date(share.created_at)} 创建<br><small>${date(share.expires_at)} 到期</small></span><button type="button" class="button secondary" data-revoke-share="${esc(share.id)}">撤销</button></div>`).join(''):'<p class="account-help">没有有效的分享链接。</p>';
+}
+$('share-conversation').addEventListener('click',()=>{
+  shareAgent=selected;$('share-list').textContent='正在加载…';$('share-dialog').showModal();
+  loadShares().catch(error=>{if($('share-dialog').open)$('share-list').textContent=error.message;});
+});
+$('share-form').addEventListener('submit',async event=>{
+  event.preventDefault();const button=event.currentTarget.querySelector('button'),id=shareAgent,account=generation;
+  button.disabled=true;
+  try {
+    const share=await api(`agents/${encodeURIComponent(id)}/shares`,{expiresIn:Number($('share-duration').value)});
+    if(account!==generation||id!==shareAgent||!$('share-dialog').open)return;
+    $('share-link').value=location.origin+share.path;$('share-result').dataset.id=share.id;$('share-result').hidden=false;
+    $('share-result-note').textContent=`${date(share.expires_at)} 到期 · ${share.message_count} 条消息`;
+    await loadShares();
+  } catch(error){if(account===generation)toast(error.message);}
+  finally{button.disabled=false;}
+});
+$('copy-share').addEventListener('click',async()=>{
+  try{await navigator.clipboard.writeText($('share-link').value);toast('分享链接已复制');}
+  catch{$('share-link').focus();$('share-link').select();toast('请复制选中的链接');}
+});
+$('share-list').addEventListener('click',async event=>{
+  const button=event.target.closest('[data-revoke-share]');if(!button)return;
+  button.disabled=true;
+  try{await api(`shares/${encodeURIComponent(button.dataset.revokeShare)}/revoke`,{});if($('share-result').dataset.id===button.dataset.revokeShare){$('share-link').value='';$('share-result').hidden=true;}await loadShares();toast('分享已撤销');}
+  catch(error){toast(error.message);button.disabled=false;}
+});
+$('share-dialog').addEventListener('close',()=>{shareAgent='';shareRequest++;$('share-link').value='';$('share-result').hidden=true;$('share-list').replaceChildren();});

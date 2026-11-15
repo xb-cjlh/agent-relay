@@ -1,0 +1,11 @@
+.share-page { height: auto; min-height: 100dvh; overflow: auto; }
+.share-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 900px; margin: auto; padding: 24px 30px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.share-brand { display: flex; align-items: center; gap: 10px; color: var(--accent); text-decoration: none; font-size: 16px; }
+.share-content { max-width: 850px; padding: 32px 35px; margin: auto; }
+.share-content > h1 { font-size: 22px; font-weight: 500; overflow-wrap: anywhere; margin: 0 0 12px; }
+#share-meta { margin-bottom: 35px; }
+#share-status { color: var(--muted); font-size: 14px; }
+#share-image-view img { display: block; max-width: 100%; max-height: 75dvh; margin: auto; object-fit: contain; }
+#share-messages .message-byline { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+.share-page .message-images button { width: auto; height: auto; padding: 0; border: 0; }
+@media (max-width: 760px) { .share-header { padding: 18px; } .share-content { padding: 24px 18px; } }
