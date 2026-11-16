@@ -514,7 +514,7 @@ function renderMessages() {
         else if (['running','cancelling'].includes(message.status)) text = `<span class="typing">${message.status === 'cancelling' ? '正在停止…' : '正在回复…'}</span>`;
         else text = message.status === 'failed' ? '' : message.status === 'cancelled' ? '已停止。' : '本轮已结束，没有文本输出。';
         if (message.role === 'user' && message.images?.length) text += `<div class="message-images">${message.images.map(img => `<a href="/api/images/${encodeURIComponent(img.id)}" data-view-image="${esc(img.id)}" target="_blank" rel="noopener noreferrer"><img data-image-id="${esc(img.id)}" alt="${esc(img.name)}" loading="lazy" crossorigin="anonymous" referrerpolicy="no-referrer"></a>`).join('')}</div>`;
-        if (message.role === 'user' && message.files?.length) text += `<div class="message-files">${message.files.map(file=>`<a class="file-attachment" href="/api/attachments/${encodeURIComponent(file.id)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="下载 ${esc(file.name)}"><span class="attachment-name">${esc(file.name)}</span><small>${size(file.size)} · 下载</small></a>`).join('')}</div>`;
+        if (message.role === 'user' && message.files?.length) text += `<div class="message-files">${message.files.map(file=>`<div class="file-share-card"><a class="file-attachment" href="/api/attachments/${encodeURIComponent(file.id)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="下载 ${esc(file.name)}"><span class="attachment-name">${esc(file.name)}</span><small>${size(file.size)} · 下载</small></a><button type="button" data-share-file="${esc(file.id)}" data-share-name="${esc(file.name)}">分享</button></div>`).join('')}</div>`;
         if (message.role === 'user') return `<div class="message-body">${text}</div>`;
         return `<section class="message-part"><div class="message-byline">${icon('agent')}<span>${kindName(agent?.kind)}</span><time>${date(part.created_at)}</time></div><div class="message-body">${text}</div></section>`;
       }).join('');
@@ -554,7 +554,7 @@ function renderDevices() {
 
 function renderFiles() {
   const pending = state.jobs.filter(j => j.kind === 'file_read' && j.status !== 'succeeded');
-  $('file-list').innerHTML = pending.slice(0,5).map(j => `<div class="file-entry"><div><span class="file-entry-name">${esc(j.payload.path)}</span><small class="${j.status === 'failed' ? 'error' : ''}">${esc(j.error || ({queued:'等待设备上线或领取',running:'正在取回…',cancelling:'正在取消…',cancelled:'已取消'}[j.status]) || j.status)}</small></div>${!terminal.has(j.status) ? `<button class="button secondary" data-cancel="${esc(j.id)}">取消</button>` : ''}</div>`).join('') + state.artifacts.map(f => `<div class="file-entry"><div><span class="file-entry-name">${esc(f.name)}</span><small>${size(f.size)} · ${date(f.created_at)}</small></div><button class="button secondary" data-download="${esc(f.id)}">下载</button></div>`).join('');
+  $('file-list').innerHTML = pending.slice(0,5).map(j => `<div class="file-entry"><div><span class="file-entry-name">${esc(j.payload.path)}</span><small class="${j.status === 'failed' ? 'error' : ''}">${esc(j.error || ({queued:'等待设备上线或领取',running:'正在取回…',cancelling:'正在取消…',cancelled:'已取消'}[j.status]) || j.status)}</small></div>${!terminal.has(j.status) ? `<button class="button secondary" data-cancel="${esc(j.id)}">取消</button>` : ''}</div>`).join('') + state.artifacts.map(f => `<div class="file-entry"><div><span class="file-entry-name">${esc(f.name)}</span><small>${size(f.size)} · ${date(f.created_at)}</small></div><button class="button secondary" data-share-file="${esc(f.id)}" data-share-name="${esc(f.name)}">分享</button><button class="button secondary" data-download="${esc(f.id)}">下载</button></div>`).join('');
 }
 
 async function downloadFile(id) {
@@ -757,14 +757,15 @@ $('open-sidebar').addEventListener('click',() => toggleSidebar(true));
 $('close-sidebar').addEventListener('click',() => toggleSidebar(false));
 $('sidebar-backdrop').addEventListener('click',() => toggleSidebar(false));
 document.addEventListener('click',async e => {
-  const target = e.target.closest('[data-view-image],[data-remove-image],[data-agent],[data-view-device],[data-close],[data-cancel],[data-download],[data-copy-code]');
+  const target = e.target.closest('[data-share-file],[data-view-image],[data-remove-image],[data-agent],[data-view-device],[data-close],[data-cancel],[data-download],[data-copy-code]');
   if (!target) return;
   try {
+    if (target.dataset.shareFile) openFileShare(target.dataset.shareFile,target.dataset.shareName);
     if (target.dataset.viewImage) {
       e.preventDefault();
       const img=document.createElement('img'); img.dataset.imageId=target.dataset.viewImage;
       img.alt=target.querySelector('img').alt;img.crossOrigin='anonymous';img.referrerPolicy='no-referrer';
-      $('image-title').textContent=img.alt;$('image-view').replaceChildren(img);
+      $('share-image').dataset.file=target.dataset.viewImage;$('image-title').textContent=img.alt;$('image-view').replaceChildren(img);
       $('image-dialog').showModal();loadImages($('image-view'));
     }
     if (target.dataset.removeImage) {attachmentDrafts.set(selected,(attachmentDrafts.get(selected)||[]).filter(img=>img.id!==target.dataset.removeImage));renderHeader();}
@@ -885,26 +886,32 @@ window.addEventListener('resize',updateViewport);
 document.addEventListener('focusin',()=>requestAnimationFrame(updateViewport));
 updateViewport();
 
-let shareAgent='',shareRequest=0;
+let shareTarget=null,shareRequest=0;
+function sharePath(target) {return target.type==='file'?'file-shares':`agents/${encodeURIComponent(target.id)}/shares`;}
+function openFileShare(id,name) {openShare({type:'file',id,name});}
+function openShare(target) {
+  shareTarget=target;$('share-title').textContent=target.type==='file'?'分享文件':'分享会话';
+  $('share-description').textContent=target.type==='file'?`分享「${target.name||'文件'}」的当前版本，持有链接的人无需登录即可预览或下载。之后的文件变化不会加入分享。`:'生成当前会话的只读快照，包含消息和上传附件。持有链接的人无需登录即可查看，后续新消息不会加入分享。';
+  $('share-list').textContent='正在加载…';$('share-dialog').showModal();
+  loadShares().catch(error=>{if($('share-dialog').open)$('share-list').textContent=error.message;});
+}
 async function loadShares() {
-  const id=shareAgent,request=++shareRequest,account=generation;
-  const result=await api(`agents/${encodeURIComponent(id)}/shares`);
-  if(id!==shareAgent||request!==shareRequest||account!==generation)return;
+  const target=shareTarget,request=++shareRequest,account=generation;if(!target)return;
+  const result=await api(sharePath(target)+(target.type==='file'?'?file='+encodeURIComponent(target.id):''));
+  if(target!==shareTarget||request!==shareRequest||account!==generation)return;
   const active=result.shares.filter(share=>!share.revoked_at&&share.expires_at*1000>Date.now());
   $('share-list').innerHTML=active.length?active.map(share=>`<div class="share-entry"><span>${date(share.created_at)} 创建<br><small>${date(share.expires_at)} 到期</small></span><button type="button" class="button secondary" data-revoke-share="${esc(share.id)}">撤销</button></div>`).join(''):'<p class="account-help">没有有效的分享链接。</p>';
 }
-$('share-conversation').addEventListener('click',()=>{
-  shareAgent=selected;$('share-list').textContent='正在加载…';$('share-dialog').showModal();
-  loadShares().catch(error=>{if($('share-dialog').open)$('share-list').textContent=error.message;});
-});
+$('share-conversation').addEventListener('click',()=>openShare({type:'conversation',id:selected}));
+$('share-image').addEventListener('click',()=>openFileShare($('share-image').dataset.file,$('image-title').textContent));
 $('share-form').addEventListener('submit',async event=>{
-  event.preventDefault();const button=event.currentTarget.querySelector('button'),id=shareAgent,account=generation;
+  event.preventDefault();const button=event.currentTarget.querySelector('button'),target=shareTarget,account=generation;
   button.disabled=true;
   try {
-    const share=await api(`agents/${encodeURIComponent(id)}/shares`,{expiresIn:Number($('share-duration').value)});
-    if(account!==generation||id!==shareAgent||!$('share-dialog').open)return;
+    const share=await api(sharePath(target),{expiresIn:Number($('share-duration').value),...(target.type==='file'?{file:target.id}:{})});
+    if(account!==generation||target!==shareTarget||!$('share-dialog').open)return;
     $('share-link').value=location.origin+share.path;$('share-result').dataset.id=share.id;$('share-result').hidden=false;
-    $('share-result-note').textContent=`${date(share.expires_at)} 到期 · ${share.message_count} 条消息`;
+    $('share-result-note').textContent=`${date(share.expires_at)} 到期 · ${share.file?size(share.file.size):share.message_count+' 条消息'}`;
     await loadShares();
   } catch(error){if(account===generation)toast(error.message);}
   finally{button.disabled=false;}
@@ -919,4 +926,4 @@ $('share-list').addEventListener('click',async event=>{
   try{await api(`shares/${encodeURIComponent(button.dataset.revokeShare)}/revoke`,{});if($('share-result').dataset.id===button.dataset.revokeShare){$('share-link').value='';$('share-result').hidden=true;}await loadShares();toast('分享已撤销');}
   catch(error){toast(error.message);button.disabled=false;}
 });
-$('share-dialog').addEventListener('close',()=>{shareAgent='';shareRequest++;$('share-link').value='';$('share-result').hidden=true;$('share-list').replaceChildren();});
+$('share-dialog').addEventListener('close',()=>{shareTarget=null;shareRequest++;$('share-link').value='';$('share-result').hidden=true;$('share-list').replaceChildren();});

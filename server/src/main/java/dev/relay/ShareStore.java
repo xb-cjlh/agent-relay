@@ -6,7 +6,7 @@ import java.security.SecureRandom;
 import java.util.*;
 import static dev.relay.Values.*;
 
-/** Immutable, explicitly scoped conversation snapshots; share secrets are never stored. */
+/** Immutable conversation and file snapshots; share secrets are never stored. */
 @Component
 final class ShareStore {
     static final int MAX_MESSAGES=5000, MAX_BYTES=8*1024*1024;
@@ -57,11 +57,47 @@ final class ShareStore {
         String snapshot=store.encode(map("title",title,"kind",agent.get("kind"),"messages",messages));
         if(snapshot.getBytes(StandardCharsets.UTF_8).length>MAX_BYTES)throw new ApiException(413,"会话内容超过 8 MiB，暂时无法分享");
         if(number(usage.get("bytes"))+snapshot.getBytes(StandardCharsets.UTF_8).length>64*1024*1024)throw new ApiException(429,"分享内容已达上限，请先撤销部分链接");
+        var issued=issue("conversation",text(agent.get("id")),null,title,snapshot,resources,now()+duration);
+        issued.put("message_count",messages.size());return issued;
+    }
+    private Map<String,Object> issue(String type,String agent,String resource,String title,String snapshot,Map<String,Object> resources,double expires) {
         byte[] secret=new byte[32];random.nextBytes(secret);
         String token="shr-relay_"+Base64.getUrlEncoder().withoutPadding().encodeToString(secret),id=id("shr");
-        double at=now(),expires=at+duration;
-        store.update("INSERT INTO conversation_shares(id,owner_user_id,agent_id,token_hash,title,snapshot,resources,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",id,store.owner(),agent.get("id"),hash(token),title,snapshot,store.encode(resources),at,expires);
-        return map("id",id,"token",token,"path","/share#"+token,"created_at",at,"expires_at",expires,"message_count",messages.size());
+        double at=now();
+        store.update("INSERT INTO conversation_shares(id,owner_user_id,agent_id,token_hash,title,snapshot,resources,created_at,expires_at,share_type,resource_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",id,store.owner(),agent,hash(token),title,snapshot,store.encode(resources),at,expires,type,resource);
+        return map("id",id,"token",token,"path","/share#"+token,"created_at",at,"expires_at",expires);
+    }
+    Object createFile(Map<String,Object> body) throws java.io.IOException {
+        int duration=integer(body.getOrDefault("expiresIn",604800),60,2592000,"分享有效期（秒）");
+        String id=required(body,"file",64);cleanup();
+        var usage=store.row("SELECT COUNT(*) n,COALESCE(SUM(OCTET_LENGTH(snapshot)),0) bytes FROM conversation_shares WHERE owner_user_id=? AND revoked_at IS NULL AND expires_at>?",store.owner(),now());
+        if(number(usage.get("n"))>=50)throw new ApiException(429,"有效分享过多，请先撤销部分链接");
+        double expires=now()+duration;
+        var file=fileResource(id,expires);
+        String key=text(file.remove("key"));
+        var resources=map("file",map("key",key,"name",file.get("name")));
+        String snapshot=store.encode(map("file",file));
+        if(number(usage.get("bytes"))+snapshot.getBytes(StandardCharsets.UTF_8).length>64*1024*1024)throw new ApiException(429,"分享内容已达上限，请先撤销部分链接");
+        var result=issue("file",null,id,text(file.get("name")),snapshot,resources,expires);
+        result.put("file",file);return result;
+    }
+    private Map<String,Object> fileResource(String id,double expires) throws java.io.IOException {
+        if(!oss.configured())throw new ApiException(503,"请先配置 OSS 文件存储后再分享文件");
+        if(id.matches("file_[a-zA-Z0-9]+"))return store.fileStore.shareResource(id,expires);
+        String table=id.matches("att_[a-zA-Z0-9]+")?"attachments":id.matches("img_[a-zA-Z0-9]+")?"images":null;
+        if(table==null)throw new ApiException("文件 ID 无效");
+        var file=store.row("SELECT id,name,size,sha256,object_key,job_id FROM "+table+" WHERE id=? AND owner_user_id=?",id,store.owner());
+        if(file.remove("job_id")==null)throw new ApiException(409,"请先发送附件，再创建分享");
+        String key=text(file.remove("object_key"));var head=oss.head(key);
+        if(head==null)throw new ApiException(404,"文件已不可用");
+        if(head.getContentLength()!=(long)number(file.get("size"))||!file.get("sha256").equals(head.getUserMetadata().get("sha256")))throw new ApiException(409,"文件校验失败");
+        file.put("key",key);return file;
+    }
+    Object listFileShares(String id) {
+        if(id==null||!id.matches("(file|att|img)_[a-zA-Z0-9]+"))throw new ApiException("文件 ID 无效");
+        if(id.startsWith("file_"))store.fileStore.artifact(id);
+        else store.row("SELECT id FROM "+(id.startsWith("att_")?"attachments":"images")+" WHERE id=? AND owner_user_id=?",id,store.owner());
+        return map("shares",store.rows("SELECT id,title,created_at,expires_at,revoked_at FROM conversation_shares WHERE resource_id=? AND share_type='file' AND owner_user_id=? AND revoked_at IS NULL AND expires_at>? ORDER BY created_at DESC LIMIT 50",id,store.owner(),now()));
     }
     Object listShares(String agentId) {
         var agent=store.agent(agentId);
@@ -75,11 +111,12 @@ final class ShareStore {
     Map<String,Object> resolve(String authorization,boolean conversation) {
         String token=authorization!=null&&authorization.startsWith("Bearer ")?authorization.substring(7):"";
         if(!token.matches("shr-relay_[A-Za-z0-9_-]{43}"))throw unavailable();
-        var found=store.rows("SELECT expires_at,resources"+(conversation?",snapshot,created_at":"")+" FROM conversation_shares WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?",hash(token),now());
+        var found=store.rows("SELECT share_type,expires_at,resources"+(conversation?",snapshot,created_at":"")+" FROM conversation_shares WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?",hash(token),now());
         if(found.isEmpty())throw unavailable();
         return found.get(0);
     }
     Object view(Map<String,Object> share,String before) {
+        requireType(share,"conversation");
         var snapshot=object(store.decode(share.get("snapshot")));var messages=list(snapshot.get("messages"),MAX_MESSAGES);
         int end=messages.size();
         if(before!=null) {
@@ -90,6 +127,7 @@ final class ShareStore {
         return map("title",snapshot.get("title"),"kind",snapshot.get("kind"),"created_at",share.get("created_at"),"expires_at",share.get("expires_at"),"messages",messages.subList(start,end),"has_more",start>0,"next_before",start);
     }
     Object resource(Map<String,Object> share,String id,boolean image) {
+        requireType(share,"conversation");
         var resource=object(store.decode(share.get("resources"))).get(id);
         if(resource==null||truth(object(resource).get("image"))!=image)throw new ApiException(404,"此附件不在分享范围内");
         var file=object(resource);
@@ -97,6 +135,18 @@ final class ShareStore {
         String url=image?oss.presignGet(text(file.get("key")),text(file.get("mime")),expires):oss.presignFileGet(text(file.get("key")),text(file.get("name")),expires);
         return map("url",url,"expiresAt",expires);
     }
+    Object content(Map<String,Object> share,String before) {
+        if("conversation".equals(share.get("share_type")))return view(share,before);
+        requireType(share,"file");
+        var snapshot=object(store.decode(share.get("snapshot")));
+        return map("type","file","file",snapshot.get("file"),"created_at",share.get("created_at"),"expires_at",share.get("expires_at"));
+    }
+    Object fileUrl(Map<String,Object> share) {
+        requireType(share,"file");var file=object(object(store.decode(share.get("resources"))).get("file"));
+        long expires=Math.min(System.currentTimeMillis()+300000,(long)(number(share.get("expires_at"))*1000));
+        return map("url",oss.presignFileGet(text(file.get("key")),text(file.get("name")),expires),"expiresAt",expires);
+    }
+    private void requireType(Map<String,Object> share,String type) {if(!type.equals(share.get("share_type")))throw new ApiException(404,"此内容不在分享范围内");}
     void cleanup() {
         store.update("UPDATE conversation_shares SET snapshot='{}',resources='{}' WHERE owner_user_id=? AND (expires_at<=? OR revoked_at IS NOT NULL) AND snapshot<>'{}'",store.owner(),now());
     }

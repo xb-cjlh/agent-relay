@@ -31,8 +31,10 @@ final class ApiController {
           if(path.startsWith("/api/shared/")) {
             if(!method.equals("GET"))throw new ApiException(405,"分享仅支持查看");
             try(Store.Transaction tx=store.transaction()) {
-                var share=shares.resolve(request.getHeader("Authorization"),path.equals("/api/shared/conversation"));Object result;
-                if(path.equals("/api/shared/conversation"))result=shares.view(share,request.getParameter("before"));
+                var share=shares.resolve(request.getHeader("Authorization"),Set.of("/api/shared/content","/api/shared/conversation").contains(path));Object result;
+                if(path.equals("/api/shared/content"))result=shares.content(share,request.getParameter("before"));
+                else if(path.equals("/api/shared/conversation"))result=shares.view(share,request.getParameter("before"));
+                else if(path.equals("/api/shared/file/url"))result=shares.fileUrl(share);
                 else if(path.matches("/api/shared/images/img_[a-zA-Z0-9]+/url"))result=shares.resource(share,path.split("/")[4],true);
                 else if(path.matches("/api/shared/attachments/att_[a-zA-Z0-9]+/url"))result=shares.resource(share,path.split("/")[4],false);
                 else throw new ApiException(404,"接口不存在");
@@ -79,6 +81,8 @@ final class ApiController {
         else if (method.equals("GET") && path.matches("/api/agents/[^/]+/messages")) result=store.conversation(path.split("/")[3],cursor);
         else if (method.equals("POST") && path.matches("/api/agents/[^/]+/shares")) result=shares.create(path.split("/")[3],body);
         else if (method.equals("GET") && path.matches("/api/agents/[^/]+/shares")) result=shares.listShares(path.split("/")[3]);
+        else if (method.equals("POST") && path.equals("/api/file-shares")) result=shares.createFile(body);
+        else if (method.equals("GET") && path.equals("/api/file-shares")) result=shares.listFileShares(request.getParameter("file"));
         else if (method.equals("POST") && path.matches("/api/shares/shr_[a-zA-Z0-9]+/revoke")) result=shares.revoke(path.split("/")[3]);
         else if (method.equals("POST") && path.equals("/api/jobs")) {
             List<Object> attachments=List.of(),uploadedFiles=List.of();

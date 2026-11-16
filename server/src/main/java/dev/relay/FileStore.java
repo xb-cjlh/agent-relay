@@ -132,6 +132,18 @@ final class FileStore {
         result.putAll(map("storage",remote?"oss":"local","url",remote?oss.presignFileGet(text(file.get("object_key")),text(file.get("name")),Math.min(expires,(long)(number(file.get("expires_at"))*1000))):"/api/files/"+id,"expiresAt",expires));
         return result;
     }
+    Map<String,Object> shareResource(String id,double expires) throws java.io.IOException {
+        var file=artifact(id);promote(file);
+        if(file.get("object_key")==null||file.get("expires_at")==null||number(file.get("expires_at"))<=now())throw new ApiException(404,"文件缓存已失效，请重新取回后分享");
+        String key=text(file.get("object_key"));
+        var head=oss.head(key);
+        if(head==null)throw new ApiException(404,"文件缓存已失效，请重新取回后分享");
+        if(head.getContentLength()!=(long)number(file.get("size"))||!file.get("sha256").equals(head.getUserMetadata().get("sha256")))throw new ApiException(409,"文件缓存校验失败，请重新取回");
+        // A share points at this immutable version, even when the device changes
+        // the original path. Keep it alive through the final share's expiry.
+        store.update("UPDATE file_objects SET expires_at=GREATEST(expires_at,?) WHERE artifact_id=?",expires,id);
+        return map("id",id,"name",file.get("name"),"size",file.get("size"),"sha256",file.get("sha256"),"key",key);
+    }
     byte[] read(Map<String,Object> file) throws java.io.IOException {
         if(file.get("expires_at")!=null&&number(file.get("expires_at"))<=now())throw new ApiException(404,"缓存文件已失效");
         byte[] bytes=file.get("object_key")!=null ? oss.readFile(text(file.get("object_key"))) : Files.readAllBytes(store.files.resolve(text(file.get("id"))));

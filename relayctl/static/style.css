@@ -298,6 +298,10 @@ html { -webkit-text-size-adjust: 100%; }
 .file-attachment .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-attachment small { opacity: .65; font-size: 11px; }
 .message-files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.file-share-card { position: relative; max-width: 100%; }
+.file-share-card .file-attachment { padding-right: 44px; }
+.file-share-card > button { position: absolute; top: 10px; right: 8px; padding: 3px; border: 0; background: transparent; color: var(--accent); font-size: 11px; cursor: pointer; }
+.file-preview-toolbar { flex-wrap: wrap; }
 #share-form { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 22px 0; }
 #share-form label { margin: 0; }
 #share-result { margin-bottom: 20px; }

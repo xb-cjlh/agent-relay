@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 final class PublicContent {
-    private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/diagrams.js","/diagram-renderer.js","/diagram.css","/vendor/mermaid.min.js","/file-cache.js","/file-preview.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
+    private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/diagrams.js","/diagram-renderer.js","/diagram.css","/vendor/mermaid.min.js","/file-cache.js","/file-preview.js","/file-text.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
     static boolean mermaidModule(String path) { return path.matches("/vendor/mermaid-12\\.3\\.0/(mermaid\\.esm\\.min\\.mjs|relay-common-v1\\.mjs|chunks/mermaid\\.esm\\.min/[a-zA-Z0-9_-]+\\.mjs)"); }
     static boolean cacheableAsset(String path) { return CACHEABLE_ASSETS.contains(path) || mermaidModule(path); }
     private final Path downloads;
@@ -31,7 +31,7 @@ final class PublicContent {
             Map.entry("/diagrams.js","static/diagrams.js"), Map.entry("/diagram.html","static/diagram.html"),
             Map.entry("/diagram-renderer.js","static/diagram-renderer.js"), Map.entry("/diagram.css","static/diagram.css"),
             Map.entry("/vendor/mermaid.min.js","static/vendor/mermaid.min.js"), Map.entry("/vendor/mermaid.LICENSE","static/vendor/mermaid.LICENSE"),
-            Map.entry("/file-preview.js","static/file-preview.js"),
+            Map.entry("/file-preview.js","static/file-preview.js"), Map.entry("/file-text.js","static/file-text.js"),
             Map.entry("/file-cache.js","static/file-cache.js"),
             Map.entry("/image-upload.js","static/image-upload.js"),
             Map.entry("/vendor/spark-md5.min.js","static/vendor/spark-md5.min.js"),

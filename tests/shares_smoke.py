@@ -78,10 +78,10 @@ def main():
      def short_expiry(route):
       response=route.fetch();body=response.json();body['expires_at']=time.time()+3
       route.fulfill(response=response,json=body)
-     public.route('**/api/shared/conversation',short_expiry)
+     public.route('**/api/shared/content',short_expiry)
      public.goto(url+expiring['path'],wait_until='domcontentloaded');expect(public.locator('#share-messages .message')).not_to_have_count(0)
      expect(public.locator('#share-status')).to_contain_text('失效',timeout=8000);expect(public.locator('#share-messages')).to_be_empty()
-     public.unroute('**/api/shared/conversation',short_expiry)
+     public.unroute('**/api/shared/content',short_expiry)
      client.request('POST','/api/shares/'+expiring['id']+'/revoke',{})
      # A missing token opens the public error state directly, even with no login cookies.
      public.goto(url+'/share');expect(public.locator('#share-status')).to_contain_text('失效')

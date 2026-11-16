@@ -3,6 +3,7 @@ const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const token=location.hash.slice(1);
 let expiresAt=0,before=null,kind='',expired=false,expiryTimer;
+let sharedFile=null,fileObjectUrl=null,previewRequest=null;
 const markdown=window.markdownit({html:false,breaks:true,linkify:true}).disable('image');
 markdown.renderer.rules.link_open=(tokens,index,options,env,renderer)=>{
   const href=tokens[index].attrGet('href')||'';
@@ -29,8 +30,11 @@ const date=value=>new Date(value*1000).toLocaleString('zh-CN');
 const size=value=>value>=1048576?(value/1048576).toFixed(1)+' MiB':value>=1024?(value/1024).toFixed(1)+' KiB':value+' B';
 
 function unavailable(message='分享链接已失效或不存在') {
-  expired=true;document.title='Relay · 分享会话';clearTimeout(expiryTimer);clearDiagrams();$('share-messages').replaceChildren();
-  $('share-title').textContent='分享会话';$('share-meta').textContent='';
+  expired=true;document.title='Relay · 分享';clearTimeout(expiryTimer);clearDiagrams();$('share-messages').replaceChildren();
+  previewRequest?.abort();previewRequest=null;sharedFile=null;
+  if(fileObjectUrl)URL.revokeObjectURL(fileObjectUrl);fileObjectUrl=null;
+  $('shared-file-content').replaceChildren();$('shared-file').hidden=true;
+  $('share-title').textContent='分享内容';$('share-meta').textContent='';
   $('share-status').textContent=message;$('share-status').hidden=false;$('share-older').hidden=true;$('share-retry').hidden=true;
   $('share-image-dialog').close();$('share-image-view').replaceChildren();
 }
@@ -74,9 +78,16 @@ function render(messages,prepend) {
 async function load(older=false) {
   $('share-older').disabled=true;$('share-retry').hidden=true;
   try {
-    const result=await api('conversation'+(older?'?before='+before:''));
+    const result=await api('content'+(older?'?before='+before:''));
     if(expired)return;
     expiresAt=result.expires_at*1000;scheduleExpiry();if(expired)return;
+    if(result.type==='file') {
+      sharedFile=result.file;$('share-title').textContent=sharedFile.name;document.title=sharedFile.name+' · Relay 分享';
+      $('share-meta').textContent=`${date(result.created_at)} 的文件快照 · ${date(result.expires_at)} 到期`;
+      $('share-older').hidden=true;$('share-messages').replaceChildren();$('shared-file').hidden=false;
+      $('shared-file-info').textContent=size(sharedFile.size);$('share-status').hidden=true;
+      await previewSharedFile();return;
+    }
     kind=result.kind;$('share-title').textContent=result.title;document.title=result.title+' · Relay 分享';
     $('share-meta').textContent=`${date(result.created_at)} 的会话快照 · ${date(result.expires_at)} 到期`;
     before=result.next_before;$('share-older').hidden=!result.has_more;
@@ -85,6 +96,63 @@ async function load(older=false) {
     if(!expired){$('share-status').textContent=error.message;$('share-status').hidden=false;$('share-retry').hidden=false;}
   } finally{$('share-older').disabled=false;}
 }
+async function previewSharedFile() {
+  previewRequest?.abort();const request=new AbortController();previewRequest=request;
+  if(fileObjectUrl)URL.revokeObjectURL(fileObjectUrl);fileObjectUrl=null;
+  const file=sharedFile,container=$('shared-file-content');container.textContent='正在加载预览…';
+  try {
+    const grant=await api('file/url');if(expired||request!==previewRequest)return;
+    const response=await fetch(grant.url,{credentials:'omit',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error',signal:request.signal});
+    if(!response.ok)throw new Error('文件暂不可用，请重试');
+    const reader=response.body.getReader(),chunks=[];let length=0;
+    while(true) {
+      const {value,done}=await reader.read();if(done)break;
+      length+=value.byteLength;
+      if(length>file.size||length>16*1024*1024){await reader.cancel();throw new Error('文件大小校验失败');}
+      chunks.push(value);
+    }
+    const data=new Uint8Array(length);let offset=0;
+    for(const chunk of chunks){data.set(chunk,offset);offset+=chunk.byteLength;}
+    const digest=[...new Uint8Array(await crypto.subtle.digest('SHA-256',data))].map(x=>x.toString(16).padStart(2,'0')).join('');
+    if(length!==file.size||digest!==file.sha256)throw new Error('文件校验失败，请重试');
+    if(expired||request!==previewRequest)return;
+    container.replaceChildren();
+    const ext=file.name.split('.').pop().toLowerCase();
+    const mime={png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',avif:'image/avif',bmp:'image/bmp'}[ext];
+    if(mime) {
+      const img=document.createElement('img');img.alt=file.name;
+      fileObjectUrl=URL.createObjectURL(new Blob([data],{type:mime}));img.src=fileObjectUrl;
+      img.onerror=()=>{if(!expired)container.textContent='浏览器无法预览此图片，请下载原文件查看。';};
+      container.append(img);return;
+    }
+    const source=previewText(data);
+    if(!source){container.textContent='此格式暂不支持预览，可下载原文件查看。';return;}
+    if(source.truncated) {
+      const note=document.createElement('p');note.className='file-preview-notice';
+      note.textContent='文件较长，仅预览前 256 KiB / 5000 行，下载可获取完整原文件。';container.append(note);
+    }
+    if(['md','markdown','mdown'].includes(ext)) {
+      const article=document.createElement('article');article.className='file-markdown message assistant';
+      article.innerHTML='<div class="message-body">'+markdown.render(source.text,{source:source.text})+'</div>';
+      container.append(article);renderDiagrams(article);
+    } else {
+      const pre=document.createElement('pre');pre.className='file-source';
+      pre.innerHTML=source.text.split('\n').map(line=>`<span class="file-source-line">${esc(line)||'\n'}</span>`).join('');container.append(pre);
+    }
+  } catch(error) {
+    if(!expired&&request===previewRequest){container.textContent=error.message;$('share-retry').hidden=false;}
+  }
+}
+function download(grant,name) {
+  if(expired)return;
+  const link=document.createElement('a');link.href=grant.url;link.download=name;link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';document.body.append(link);link.click();link.remove();
+}
+$('shared-file-download').addEventListener('click',async()=>{
+  const button=$('shared-file-download');button.disabled=true;
+  try{download(await api('file/url'),sharedFile?.name||'download');}
+  catch(error){$('share-status').textContent=error.message;$('share-status').hidden=false;}
+  finally{button.disabled=false;}
+});
 $('share-retry').addEventListener('click',()=>load());
 $('share-older').addEventListener('click',()=>load(true));
 $('share-image-close').addEventListener('click',()=>$('share-image-dialog').close());
@@ -100,8 +168,7 @@ document.addEventListener('click',async event=>{
       $('share-image-title').textContent=img.alt;$('share-image-view').replaceChildren(img);$('share-image-dialog').showModal();await loadImage(img);return;
     }
     const grant=await api('attachments/'+encodeURIComponent(target.dataset.file)+'/url');
-    if(expired)return;
-    const link=document.createElement('a');link.href=grant.url;link.download=target.dataset.name;link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';document.body.append(link);link.click();link.remove();
+    download(grant,target.dataset.name);
   } catch(error){$('share-status').textContent=error.message;$('share-status').hidden=false;}
 });
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&expiresAt)scheduleExpiry();});

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Relay · 会话</title><link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/style.css"><script src="/vendor/spark-md5.min.js" defer></script><script src="/image-upload.js" defer></script><script src="/vendor/markdown-it.min.js" defer></script><script src="/diagrams.js" defer></script><script src="/app.js" defer></script><script src="/file-cache.js" defer></script><script src="/file-preview.js" defer></script><script src="/account.js" defer></script>
+<link rel="stylesheet" href="/style.css"><script src="/vendor/spark-md5.min.js" defer></script><script src="/image-upload.js" defer></script><script src="/vendor/markdown-it.min.js" defer></script><script src="/file-text.js" defer></script><script src="/diagrams.js" defer></script><script src="/app.js" defer></script><script src="/file-cache.js" defer></script><script src="/file-preview.js" defer></script><script src="/account.js" defer></script>
 </head>
 <body>
 <div id="session-loading" class="session-loading" role="status"><img src="/favicon.svg" alt="Relay" width="36" height="36"><p id="session-loading-message">正在加载页面…</p><button id="retry-session" type="button" class="button secondary" hidden>重试</button></div>
@@ -46,7 +46,7 @@
 </div></main>
 <aside id="file-preview" class="file-preview" aria-label="文件预览" tabindex="-1" hidden>
 <div class="file-preview-header"><div><h2 id="file-preview-name">文件预览</h2><p id="file-preview-source"></p></div><button id="fullscreen-file-preview" class="icon-button" type="button" aria-label="全屏预览" title="全屏预览" aria-pressed="false"><span data-icon="expand"></span></button><button id="close-file-preview" class="icon-button" type="button" aria-label="关闭文件预览"><span data-icon="close"></span></button></div>
-<div class="file-preview-toolbar"><span id="file-preview-info" role="status"></span><button id="retry-file-preview" type="button" class="button secondary" hidden>重试</button><button id="download-file-preview" type="button" class="button secondary" disabled>下载原文件</button></div>
+<div class="file-preview-toolbar"><span id="file-preview-info" role="status"></span><button id="retry-file-preview" type="button" class="button secondary" hidden>重试</button><button id="share-file-preview" type="button" class="button secondary" disabled>分享</button><button id="download-file-preview" type="button" class="button secondary" disabled>下载原文件</button></div>
 <div id="file-preview-content" class="file-preview-content" tabindex="0"></div>
 </aside></div>
 <dialog id="agent-dialog"><form id="agent-form" class="dialog-content"><div class="dialog-heading"><h2>新会话</h2><button type="button" class="icon-button" data-close="agent-dialog" aria-label="关闭"><span data-icon="close"></span></button></div>
@@ -66,9 +66,9 @@
 <div id="new-key" class="new-key" hidden><p>请立即保存，关闭后无法再次查看。</p><code id="new-key-secret"></code><button id="copy-key" type="button" class="button secondary">复制 SK</button></div><div id="key-list"></div>
 
 </div></dialog>
-<dialog id="image-dialog" class="image-dialog" aria-labelledby="image-title"><div class="dialog-content"><div class="dialog-heading"><h2 id="image-title">图片</h2><button type="button" class="icon-button" data-close="image-dialog" aria-label="关闭图片"><span data-icon="close"></span></button></div><div id="image-view"></div></div></dialog>
+<dialog id="image-dialog" class="image-dialog" aria-labelledby="image-title"><div class="dialog-content"><div class="dialog-heading"><h2 id="image-title">图片</h2><button id="share-image" type="button" class="button secondary">分享</button><button type="button" class="icon-button" data-close="image-dialog" aria-label="关闭图片"><span data-icon="close"></span></button></div><div id="image-view"></div></div></dialog>
 <dialog id="share-dialog" aria-labelledby="share-title"><div class="dialog-content"><div class="dialog-heading"><h2 id="share-title">分享会话</h2><button type="button" class="icon-button" data-close="share-dialog" aria-label="关闭分享">×</button></div>
-<p class="account-help">生成当前会话的只读快照，包含消息和上传附件。持有链接的人无需登录即可查看，后续新消息不会加入分享。</p>
+<p id="share-description" class="account-help">生成当前会话的只读快照，包含消息和上传附件。持有链接的人无需登录即可查看，后续新消息不会加入分享。</p>
 <form id="share-form"><label for="share-duration">链接有效期</label><select id="share-duration"><option value="3600">1 小时</option><option value="86400">1 天</option><option value="604800" selected>7 天</option><option value="2592000">30 天</option></select><button class="button primary" type="submit">生成分享链接</button></form>
 <div id="share-result" hidden><label for="share-link">分享链接（关闭后不再显示）</label><div class="file-input-row"><input id="share-link" readonly><button id="copy-share" type="button" class="button secondary">复制</button></div><p id="share-result-note" class="account-help"></p></div>
 <div id="share-list" aria-live="polite"></div></div></dialog>
