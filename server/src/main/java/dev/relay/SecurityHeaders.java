@@ -15,8 +15,15 @@ final class SecurityHeaders extends OncePerRequestFilter {
             response.setHeader("Cache-Control","no-store");
         response.setHeader("X-Content-Type-Options","nosniff");
         response.setHeader("Referrer-Policy","no-referrer");
-        if(request.getRequestURI().startsWith("/share")||request.getRequestURI().startsWith("/api/shared/"))
+        if(request.getRequestURI().startsWith("/share")||request.getRequestURI().startsWith("/api/shared/")||request.getRequestURI().equals("/file")||request.getRequestURI().equals("/file/"))
             response.setHeader("X-Robots-Tag","noindex, nofollow, noarchive");
+        if (request.getRequestURI().equals("/html-preview.html")) {
+            String host=java.net.URI.create(request.getRequestURL().toString()).getRawAuthority();
+            String renderer="http://"+host+"/html-renderer.js https://"+host+"/html-renderer.js";
+            response.setHeader("Content-Security-Policy","default-src 'none'; script-src 'unsafe-inline' "+renderer+"; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts");
+            response.setHeader("Permissions-Policy","camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+            chain.doFilter(request,response); return;
+        }
         if (request.getRequestURI().equals("/diagram.html")) {
             // WebKit gives sandboxed documents an opaque origin: 'self' cannot
             // load their static assets. Match the request host explicitly; both

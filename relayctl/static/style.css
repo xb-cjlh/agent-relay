@@ -99,6 +99,9 @@ input::placeholder, textarea::placeholder { color: #a7b19b; }
 .file-preview-toolbar .button { flex-shrink: 0; padding: 8px 10px; }
 .file-preview-content { flex: 1; min-height: 0; padding: 20px; overflow: auto; overflow-wrap: anywhere; font-size: 13px; line-height: 1.8; }
 .file-preview-content > img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.html-file-frame { display: block; width: 100%; height: 70dvh; min-height: 420px; border: 0; background: #fff; }
+.file-preview-content:has(> .html-file-frame) { display: flex; padding: 0; overflow: hidden; }
+.file-preview-content > .html-file-frame { flex: 1; height: 100%; min-height: 0; }
 .file-preview-content .message { margin-bottom: 0; }
 .file-preview-notice { padding: 9px 12px; margin: 0 0 14px; background: #f5f6f2; color: #7b806e; border-radius: 6px; font-size: 11px; }
 .file-source { margin: 0; font: 12px/1.8 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; tab-size: 4; counter-reset: source-line; }
@@ -299,8 +302,11 @@ html { -webkit-text-size-adjust: 100%; }
 .file-attachment small { opacity: .65; font-size: 11px; }
 .message-files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .file-share-card { position: relative; max-width: 100%; }
-.file-share-card .file-attachment { padding-right: 44px; }
-.file-share-card > button { position: absolute; top: 10px; right: 8px; padding: 3px; border: 0; background: transparent; color: var(--accent); font-size: 11px; cursor: pointer; }
+.file-share-card .file-attachment { padding-right: 76px; }
+.file-card-actions { position: absolute; top: 10px; right: 8px; display: flex; gap: 5px; }
+.file-card-actions > * { padding: 3px; border: 0; background: transparent; color: var(--accent); font-size: 11px; cursor: pointer; text-decoration: none; }
+a.button { text-decoration: none; }
+a.file-entry-name { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .file-preview-toolbar { flex-wrap: wrap; }
 #share-form { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 22px 0; }
 #share-form label { margin: 0; }

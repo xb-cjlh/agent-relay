@@ -1,13 +1,23 @@
 'use strict';
 
-function previewText(data) {
-  const bytes = new Uint8Array(data), limit = 256 * 1024, slice = bytes.subarray(0,limit);
+function previewText(data,limit=256*1024,maxLines=5000) {
+  const bytes = new Uint8Array(data), slice = bytes.subarray(0,limit);
   const encoding = bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf-16le' : bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be' : 'utf-8';
   let text;
   try { text = new TextDecoder(encoding,{fatal:true}).decode(slice,{stream:bytes.length > limit}); }
   catch { return null; }
   if (/[\u0000-\u0008\u000b\u000e-\u001f]/.test(text)) return null;
   const lines = text.replace(/\r\n?/g,'\n').split('\n');
-  const truncated = bytes.length > limit || lines.length > 5000;
-  return {text:lines.slice(0,5000).join('\n'),truncated};
+  const truncated = bytes.length > limit || lines.length > maxLines;
+  return {text:lines.slice(0,maxLines).join('\n'),truncated};
+}
+
+function renderHtmlFile(container,file) {
+  if(!/\.html?$/i.test(file.name))return false;
+  const source=previewText(file.data,16*1024*1024,Infinity);
+  if(!source)return false;
+  const frame=document.createElement('iframe');frame.className='html-file-frame';frame.title=file.name+' · HTML 预览';
+  frame.setAttribute('sandbox','allow-scripts');frame.setAttribute('referrerpolicy','no-referrer');
+  frame.addEventListener('load',()=>{frame.contentWindow?.postMessage({type:'relay-render-html',html:source.text},'*');},{once:true});
+  frame.src='/html-preview.html';container.append(frame);return true;
 }

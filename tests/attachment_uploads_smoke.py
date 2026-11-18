@@ -76,7 +76,7 @@ def main():
       expect(page.locator('#send-button')).to_be_enabled(); page.locator('#send-button').click()
       expect(page.locator('#messages')).to_contain_text('IMAGES:1 FILES:2 read '+kind, timeout=15000)
       expect(page.locator('#attachment-list')).not_to_be_visible()
-      user_files = page.locator('#messages .message.user .message-files a')
+      user_files = page.locator('#messages .message.user .message-files a.file-attachment')
       expect(user_files).to_have_count(4 if mobile else 2)
       with page.expect_download() as downloaded:user_files.filter(has_text='中文 report.pdf').last.click()
       assert Path(downloaded.value.path()).read_bytes() == b'%PDF-1.7\x00file fixture'

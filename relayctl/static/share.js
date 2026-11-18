@@ -2,6 +2,10 @@
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const token=location.hash.slice(1);
+const standalone=/^\/file\/?$/.test(location.pathname);
+const privateFile=standalone&&/^(file|att|img)_[A-Za-z0-9]+$/.test(token);
+if(standalone)document.body.classList.add('standalone-file');
+if(privateFile)$('share-access').textContent='文件预览';
 let expiresAt=0,before=null,kind='',expired=false,expiryTimer;
 let sharedFile=null,fileObjectUrl=null,previewRequest=null;
 const markdown=window.markdownit({html:false,breaks:true,linkify:true}).disable('image');
@@ -29,7 +33,7 @@ for(const tag of ['th_open','td_open'])markdown.renderer.rules[tag]=(tokens,inde
 const date=value=>new Date(value*1000).toLocaleString('zh-CN');
 const size=value=>value>=1048576?(value/1048576).toFixed(1)+' MiB':value>=1024?(value/1024).toFixed(1)+' KiB':value+' B';
 
-function unavailable(message='分享链接已失效或不存在') {
+function unavailable(message=privateFile?'文件不可用或已过期':'分享链接已失效或不存在') {
   expired=true;document.title='Relay · 分享';clearTimeout(expiryTimer);clearDiagrams();$('share-messages').replaceChildren();
   previewRequest?.abort();previewRequest=null;sharedFile=null;
   if(fileObjectUrl)URL.revokeObjectURL(fileObjectUrl);fileObjectUrl=null;
@@ -39,14 +43,16 @@ function unavailable(message='分享链接已失效或不存在') {
   $('share-image-dialog').close();$('share-image-view').replaceChildren();
 }
 async function api(path) {
-  if(expired)throw new Error('分享链接已失效');
-  const response=await fetch('/api/shared/'+path,{credentials:'omit',headers:{Authorization:'Bearer '+token},cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',signal:AbortSignal.timeout(20000)});
+  if(expired)throw new Error(privateFile?'文件不可用':'分享链接已失效');
+  const endpoint=privateFile?'/api/file-preview/'+encodeURIComponent(token):'/api/shared/'+path;
+  const response=await fetch(endpoint,{credentials:privateFile?'same-origin':'omit',headers:privateFile?{}:{Authorization:'Bearer '+token},cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',signal:AbortSignal.timeout(20000)});
   if(!response.ok) {
     const data=await response.json().catch(()=>({}));
-    if(response.status===404||response.status===401)unavailable(data.error);
+    if(response.status===404||response.status===401)unavailable(privateFile&&response.status===401?'请先登录 Relay，再刷新此页面。':data.error);
     throw new Error(data.error||'暂时无法加载，请重试');
   }
-  return response.json();
+  const result=await response.json();
+  return privateFile&&path==='content'?{type:'file',file:result,created_at:result.created_at,expires_at:result.expires_at}:result;
 }
 function scheduleExpiry() {
   clearTimeout(expiryTimer);
@@ -80,10 +86,11 @@ async function load(older=false) {
   try {
     const result=await api('content'+(older?'?before='+before:''));
     if(expired)return;
-    expiresAt=result.expires_at*1000;scheduleExpiry();if(expired)return;
+    expiresAt=(result.expires_at||0)*1000;if(expiresAt)scheduleExpiry();if(expired)return;
     if(result.type==='file') {
-      sharedFile=result.file;$('share-title').textContent=sharedFile.name;document.title=sharedFile.name+' · Relay 分享';
-      $('share-meta').textContent=`${date(result.created_at)} 的文件快照 · ${date(result.expires_at)} 到期`;
+      sharedFile=result.file;$('share-title').textContent=sharedFile.name;document.title=sharedFile.name+' · Relay';
+      $('share-meta').textContent=privateFile?'':`${date(result.created_at)} 的文件快照 · ${date(result.expires_at)} 到期`;
+      $('shared-file-open').href='/file#'+token;$('shared-file-open').hidden=standalone;
       $('share-older').hidden=true;$('share-messages').replaceChildren();$('shared-file').hidden=false;
       $('shared-file-info').textContent=size(sharedFile.size);$('share-status').hidden=true;
       await previewSharedFile();return;
@@ -102,7 +109,9 @@ async function previewSharedFile() {
   const file=sharedFile,container=$('shared-file-content');container.textContent='正在加载预览…';
   try {
     const grant=await api('file/url');if(expired||request!==previewRequest)return;
-    const response=await fetch(grant.url,{credentials:'omit',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error',signal:request.signal});
+    const local=privateFile&&grant.storage==='local';
+    const response=await fetch(local?'/api/files/'+encodeURIComponent(token):grant.url,{credentials:local?'same-origin':'omit',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error',signal:request.signal});
+    if(local&&response.status===401){unavailable('请先登录 Relay，再刷新此页面。');return;}
     if(!response.ok)throw new Error('文件暂不可用，请重试');
     const reader=response.body.getReader(),chunks=[];let length=0;
     while(true) {
@@ -117,6 +126,8 @@ async function previewSharedFile() {
     if(length!==file.size||digest!==file.sha256)throw new Error('文件校验失败，请重试');
     if(expired||request!==previewRequest)return;
     container.replaceChildren();
+    document.body.classList.toggle('html-file',/\.html?$/i.test(file.name));
+    if(renderHtmlFile(container,{name:file.name,data}))return;
     const ext=file.name.split('.').pop().toLowerCase();
     const mime={png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',avif:'image/avif',bmp:'image/bmp'}[ext];
     if(mime) {
@@ -171,7 +182,11 @@ document.addEventListener('click',async event=>{
     download(grant,target.dataset.name);
   } catch(error){$('share-status').textContent=error.message;$('share-status').hidden=false;}
 });
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&expiresAt)scheduleExpiry();});
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden||expired)return;
+  if(expiresAt)scheduleExpiry();
+  if(privateFile)api('file/url').catch(()=>{});
+});
 window.addEventListener('hashchange',()=>location.reload());
 window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
-if(/^shr-relay_[A-Za-z0-9_-]{43}$/.test(token))load();else unavailable();
+if(privateFile||/^shr-relay_[A-Za-z0-9_-]{43}$/.test(token))load();else unavailable();

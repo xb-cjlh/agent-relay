@@ -120,6 +120,7 @@ final class ApiController {
         else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/complete")) result=store.complete(deviceId,path.split("/")[4],body);
         else if (method.equals("GET") && path.equals("/api/files/cache")) result=map("file",store.fileStore.cached(required(map("device",request.getParameter("device")),"device"),required(map("path",request.getParameter("path")),"path")));
         else if (method.equals("GET") && path.matches("/api/files/[^/]+/url")) result=store.fileStore.url(path.split("/")[3]);
+        else if (method.equals("GET") && path.matches("/api/file-preview/(file|att|img)_[a-zA-Z0-9]+")) result=store.fileStore.preview(path.split("/")[3]);
         else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/file-upload")) result=store.fileStore.initiate(deviceId,path.split("/")[4],body);
         else if (method.equals("GET") && path.matches("/api/files/[^/]+")) {
             var file=store.fileStore.artifact(path.split("/")[3]);

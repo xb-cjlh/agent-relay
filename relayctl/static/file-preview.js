@@ -73,6 +73,8 @@ function showPreviewFile(preview, entry, cached = false) {
   $('file-preview-info').title = '取回时间：' + new Date(entry.fetchedAt).toLocaleString('zh-CN');
   $('download-file-preview').disabled = false;
   $('share-file-preview').disabled = false;
+  $('open-file-preview').href = '/file#' + encodeURIComponent(entry.file.id);
+  $('open-file-preview').hidden = false;
   renderFilePreview(preview);
 }
 
@@ -90,6 +92,8 @@ function closeFilePreview(restoreFocus = true) {
   $('file-preview-info').title = '';
   $('download-file-preview').disabled = true;
   $('share-file-preview').disabled = true;
+  $('open-file-preview').hidden = true;
+  $('open-file-preview').removeAttribute('href');
   setPreviewFullscreen(false);
   updatePreviewLayout();
   if (restoreFocus && previous?.trigger?.isConnected) previous.trigger.focus({preventScroll:true});
@@ -233,6 +237,7 @@ function renderFilePreview(preview) {
   container.replaceChildren(); container.scrollTop = 0;
   if (preview.url) { URL.revokeObjectURL(preview.url); preview.url = null; }
   const ext = file.name.split('.').pop().toLowerCase();
+  if (!preview.line && renderHtmlFile(container,file)) return;
   const mime = {png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',avif:'image/avif',bmp:'image/bmp'}[ext];
   if (mime) {
     const img = document.createElement('img'); img.alt = file.name;

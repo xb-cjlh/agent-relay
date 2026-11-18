@@ -132,6 +132,14 @@ final class FileStore {
         result.putAll(map("storage",remote?"oss":"local","url",remote?oss.presignFileGet(text(file.get("object_key")),text(file.get("name")),Math.min(expires,(long)(number(file.get("expires_at"))*1000))):"/api/files/"+id,"expiresAt",expires));
         return result;
     }
+    Map<String,Object> preview(String id) throws java.io.IOException {
+        if(id.startsWith("file_"))return url(id);
+        String table=id.startsWith("att_")?"attachments":"images";
+        var file=store.row("SELECT id,name,size,sha256,created_at,object_key FROM "+table+" WHERE id=? AND owner_user_id=?",id,store.owner());
+        String key=text(file.remove("object_key"));long expires=System.currentTimeMillis()+300000;
+        file.putAll(map("storage","oss","url",oss.presignFileGet(key,text(file.get("name")),expires),"expiresAt",expires));
+        return file;
+    }
     Map<String,Object> shareResource(String id,double expires) throws java.io.IOException {
         var file=artifact(id);promote(file);
         if(file.get("object_key")==null||file.get("expires_at")==null||number(file.get("expires_at"))<=now())throw new ApiException(404,"文件缓存已失效，请重新取回后分享");

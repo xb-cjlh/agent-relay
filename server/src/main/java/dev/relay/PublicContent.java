@@ -26,6 +26,8 @@ final class PublicContent {
         String file=Map.ofEntries(
             Map.entry("/","static/index.html"), Map.entry("/app.js","static/app.js"),
             Map.entry("/share","static/share.html"), Map.entry("/share/","static/share.html"),
+            Map.entry("/file","static/share.html"), Map.entry("/file/","static/share.html"),
+            Map.entry("/html-preview.html","static/html-preview.html"), Map.entry("/html-renderer.js","static/html-renderer.js"),
             Map.entry("/share.js","static/share.js"), Map.entry("/share.css","static/share.css"),
             Map.entry("/account.js","static/account.js"),
             Map.entry("/diagrams.js","static/diagrams.js"), Map.entry("/diagram.html","static/diagram.html"),
