@@ -21,7 +21,7 @@ window.RelayNotifications = (() => {
     if(!config.configured){$('push-status').textContent='服务端尚未配置浏览器推送，仍可查看通知。';return;}
     const subscription=await (await registration()).pushManager.getSubscription();if(account!==generation)return;
     enabled=!!subscription&&Notification.permission==='granted'&&matching(subscription);
-    $('push-status').textContent=enabled?'本设备已开启通知。任务完成、需要审批或 Agent 主动提醒时会通知你。锁屏只显示通用提醒，详情登录后查看。':Notification.permission==='denied'?'通知权限已被拒绝，请在浏览器或系统设置中允许 Relay 发送通知。':'开启后，任务完成、需要审批或 Agent 主动提醒时会通知你。';
+    $('push-status').textContent=enabled?'本设备已开启通知。仅在 Agent 主动发送通知时提醒你。锁屏只显示通用提醒，详情登录后查看。':Notification.permission==='denied'?'通知权限已被拒绝，请在浏览器或系统设置中允许 Relay 发送通知。':'开启后，仅在 Agent 主动发送通知时提醒你。';
     $('enable-push').hidden=enabled;$('enable-push').disabled=busy||Notification.permission==='denied';$('disable-push').hidden=!subscription;$('disable-push').disabled=busy;
   }
   function render(){

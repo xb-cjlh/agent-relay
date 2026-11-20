@@ -18,7 +18,7 @@ You can use the **[Relay hosted service](https://relay.chaojibot.com)** directly
 
 The installation commands below connect to the hosted service by default. Codex / Claude Code still run on your devices, so install and authenticate the corresponding CLIs first. When self-hosting, replace the server address with your own domain.
 
-Enable Web Push in the sidebar’s Notifications panel (`通知`) for task completion, approval requests, and agent reminders. On iPhone, add Relay to your Home Screen through Safari first (iOS 16.4+); no paid Apple developer account is needed. CLI 0.7.0+ supports `relayctl notify --title 'Done' --body 'Results are ready'`.
+Enable Web Push in the sidebar’s Notifications panel (`通知`) for reminders explicitly sent by an agent. Task completion and approval requests do not send notifications automatically. On iPhone, add Relay to your Home Screen through Safari first (iOS 16.4+); no paid Apple developer account is needed. CLI 0.7.0+ supports `relayctl notify --title 'Done' --body 'Results are ready'`.
 
 ## Install on a device
 

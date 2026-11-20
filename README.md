@@ -18,7 +18,7 @@ Relay 让你在一个工作台管理各台电脑上的 Codex 和 Claude Code 会
 
 下方安装命令默认连接托管版。Codex / Claude Code 仍在你的设备上运行，需提前安装并登录对应 CLI；自建用户将服务端地址换成自己的域名即可。
 
-在侧栏「通知」开启 Web Push，即可接收任务结束、审批和 Agent 主动提醒。iPhone 需先通过 Safari 添加到主屏幕（iOS 16.4+），无需付费 Apple 开发者账号。CLI 0.7.0+ 支持 `relayctl notify --title '完成' --body '结果已就绪'`，详见 [通知设置](docs/install.md#浏览器通知web-push)。
+在侧栏「通知」开启 Web Push，仅接收 Agent 主动发送的提醒，任务结束和审批请求不会自动通知。iPhone 需先通过 Safari 添加到主屏幕（iOS 16.4+），无需付费 Apple 开发者账号。CLI 0.7.0+ 支持 `relayctl notify --title '完成' --body '结果已就绪'`，详见 [通知设置](docs/install.md#浏览器通知web-push)。
 
 ## 安装到设备
 

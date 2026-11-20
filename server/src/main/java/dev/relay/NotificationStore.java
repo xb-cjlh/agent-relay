@@ -28,13 +28,13 @@ final class NotificationStore {
             return result(n,true);
         }
         if(number(store.row("SELECT COUNT(*) n FROM notifications WHERE owner_user_id=? AND source='agent' AND created_at>?",store.owner(),now()-3600).get("n"))>=60)throw new ApiException(429,"每小时最多发送 60 条主动通知");
-        return result(issue(title,message,agent,job,"agent",dedupe),false);
+        return result(issue(title,message,agent,job,dedupe),false);
     }
-    Map<String,Object> issue(String title,String body,String agent,String job,String source,String dedupe) {
+    private Map<String,Object> issue(String title,String body,String agent,String job,String dedupe) {
         var existing=store.rows("SELECT * FROM notifications WHERE owner_user_id=? AND dedupe_hash=?",store.owner(),dedupe);
         if(!existing.isEmpty())return existing.get(0);
         String id=id("ntf");double at=now();
-        store.update("INSERT INTO notifications(id,owner_user_id,title,body,agent_id,job_id,source,dedupe_hash,created_at) VALUES(?,?,?,?,?,?,?,?,?)",id,store.owner(),title,body,agent,job,source,dedupe,at);
+        store.update("INSERT INTO notifications(id,owner_user_id,title,body,agent_id,job_id,source,dedupe_hash,created_at) VALUES(?,?,?,?,?,?,?,?,?)",id,store.owner(),title,body,agent,job,"agent",dedupe,at);
         store.update("INSERT INTO push_deliveries(notification_id,subscription_id,next_attempt) SELECT ?,d.id,? FROM web_push_subscriptions d JOIN auth_sessions s ON s.token_hash=d.session_hash AND s.user_id=d.owner_user_id AND s.expires_at>? WHERE d.owner_user_id=? AND d.enabled=TRUE",id,at,at,store.owner());
         return store.row("SELECT * FROM notifications WHERE id=?",id);
     }
@@ -89,17 +89,5 @@ final class NotificationStore {
             store.update("UPDATE push_deliveries SET status='cancelled' WHERE subscription_id=? AND status='pending'",id);
         }
         return map("ok",true);
-    }
-    void completed(Map<String,Object> job) {
-        if(!"prompt".equals(job.get("kind"))||!TERMINAL.contains(job.get("status"))||truth(object(job.get("payload")).get("steered")))return;
-        String status=text(job.get("status"));
-        String title=status.equals("succeeded")?"任务已完成":status.equals("failed")?"任务执行失败":"任务已停止";
-        String name=job.get("agent_name")==null?"Agent":text(job.get("agent_name"));
-        issue(title,name+" 的任务已结束，点开查看详情。",text(job.get("agent_id")),text(job.get("id")),"task",hash("task:"+job.get("id")));
-    }
-    void approval(Map<String,Object> approval,String jobId) {
-        if(!"pending".equals(approval.get("decision")))return;
-        var job=store.job(jobId);
-        issue("需要你的审批","Agent 正在等待授权，点开会话查看操作详情。",text(job.get("agent_id")),jobId,"approval",hash("approval:"+approval.get("id")));
     }
 }

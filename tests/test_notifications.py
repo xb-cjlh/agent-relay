@@ -86,13 +86,28 @@ class NotificationsCase(unittest.TestCase):
         self.assertEqual(0,self.create()['push_queued'])
         self.denied(401,self.a,'POST','/api/push/subscriptions',self.push.subscription())
 
-    def test_task_and_approval_notifications_are_idempotent(self):
-        identity=self.cli.request('POST','/api/register',{'name':'test','platform':'fixture','capabilities':{'unlimited_tasks':True,'codex':True,'codex_permissions':True,'writable':True}})
-        device=Client(self.url,identity['token']);agent=self.cli.request('POST','/api/agents',{'device':identity['id'],'kind':'codex','name':'fixture','cwd':str(self.root)})
+    def test_only_explicit_notifications_are_sent_for_codex_and_claude(self):
+        identity=self.cli.request('POST','/api/register',{'name':'test','platform':'fixture','capabilities':{'unlimited_tasks':True,'codex':True,'claude':True,'codex_permissions':True,'claude_permissions':True,'writable':True}})
+        device=Client(self.url,identity['token'])
         self.denied(403,device,'GET','/api/notifications');self.denied(404,self.cli,'POST','/api/notifications',{'title':'bad','body':'bad','agent':'unknown'})
-        job=self.cli.request('POST','/api/jobs',{'kind':'prompt','agent':agent['id'],'prompt':'fixture','permission_mode':'ask'})
-        device.request('POST','/api/device/poll',{'capacity':1})
-        approval={'id':'apr_'+'a'*48,'method':'item/commandExecution/requestApproval','details':{'command':'fixture'}}
-        for _ in range(2):device.request('POST','/api/device/jobs/'+job['id']+'/approvals',approval)
-        for _ in range(2):device.request('POST','/api/device/jobs/'+job['id']+'/complete',{'status':'succeeded','output':'done'})
-        notifications=self.cli.request('GET','/api/notifications')['notifications'];self.assertEqual(2,len(notifications));self.assertEqual({'approval','task'},{n['source'] for n in notifications});self.assertTrue(all(n['agent_id']==agent['id'] for n in notifications))
+        self.a.request('POST','/api/push/subscriptions',self.push.subscription())
+        for kind in ('codex','claude'):
+            agent=self.cli.request('POST','/api/agents',{'device':identity['id'],'kind':kind,'name':'fixture-'+kind,'cwd':str(self.root)})
+            for status in ('succeeded','failed','cancelled'):
+                job=self.cli.request('POST','/api/jobs',{'kind':'prompt','agent':agent['id'],'prompt':'fixture','permission_mode':'ask'})
+                device.request('POST','/api/device/poll',{'capacity':1})
+                approval={'id':'apr_'+('a' if kind=='codex' else 'b')*46+str(('succeeded','failed','cancelled').index(status)).zfill(2),'method':'item/commandExecution/requestApproval' if kind=='codex' else 'claude/tool/requestApproval','details':{'command':'fixture'}}
+                for _ in range(2):device.request('POST','/api/device/jobs/'+job['id']+'/approvals',approval)
+                self.assertEqual('pending',self.cli.request('GET','/api/agents/'+agent['id']+'/messages')['approvals'][0]['decision'])
+                self.assertFalse(self.cli.request('GET','/api/notifications')['notifications'])
+                for _ in range(2):device.request('POST','/api/device/jobs/'+job['id']+'/complete',{'status':status,'output':'done'})
+                self.assertFalse(self.cli.request('GET','/api/notifications')['notifications'])
+        self.assertEqual('n\n0\n',self.sql('SELECT COUNT(*) n FROM push_deliveries'))
+        self.assertFalse(self.push.messages)
+        # Explicit agent notifications still work, including a link to the finished job.
+        notice=self.create(job=job['id'],idempotencyKey='explicit-only')
+        self.assertEqual(1,notice['push_queued']);self.assertEqual(agent['id'],notice['agent_id'])
+        self.assertEqual(notice['id'],self.create(job=job['id'],idempotencyKey='explicit-only')['id'])
+        self.wait(lambda:'sent' in self.sql('SELECT status FROM push_deliveries WHERE notification_id=?',(notice['id'],)))
+        self.assertEqual(1,len(self.push.messages))
+        inbox=self.cli.request('GET','/api/notifications')['notifications'];self.assertEqual([notice['id']],[n['id'] for n in inbox]);self.assertEqual('agent',inbox[0]['source'])

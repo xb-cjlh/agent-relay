@@ -45,4 +45,4 @@ relayctl notify --title '报告已生成' --body '报告已生成，可以查看
 
 `--agent` 和 `--job JOB_ID` 可选，用于点击通知后定位所属会话；只能引用当前账号的资源。无需提醒时不要为每条回复额外发送通知。标题最多 120 字，正文最多 2000 字，避免包含密钥及不必要的敏感内容；复杂正文可通过 `--body -` 从 stdin 读取。通知始终进入账号通知中心；浏览器系统推送需要用户开启通知；iPhone 需先添加到主屏幕，服务端需配置 Web Push。返回 `push_configured=false` 或 `push_queued=0` 时，说明已保存但没有可发送的手机推送，不能声称手机已收到。即使已排队也不代表用户已阅读。
 
-重试同一提醒时复用相同 `--idempotency-key` 和内容，避免重复发送；更改内容时使用新键。每账号每小时最多 60 条主动通知。`relayctl notifications list` 查询通知，`relayctl notifications read NOTIFICATION_ID` 标为已读。系统会自动对 Relay 任务结束和审批请求生成通知，不必再手动重复提醒。
+重试同一提醒时复用相同 `--idempotency-key` 和内容，避免重复发送；更改内容时使用新键。每账号每小时最多 60 条主动通知。`relayctl notifications list` 查询通知，`relayctl notifications read NOTIFICATION_ID` 标为已读。只有主动调用 `relayctl notify` 或通知 API 才会发送通知；任务结束和审批请求不会自动触发。
