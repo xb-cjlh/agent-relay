@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 final class PublicContent {
-    private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/diagrams.js","/diagram-renderer.js","/diagram.css","/vendor/mermaid.min.js","/file-cache.js","/file-preview.js","/file-text.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
+    private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/notifications.js","/manifest.webmanifest","/icons/relay-192.png","/icons/relay-512.png","/diagrams.js","/diagram-renderer.js","/diagram.css","/vendor/mermaid.min.js","/file-cache.js","/file-preview.js","/file-text.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
     static boolean mermaidModule(String path) { return path.matches("/vendor/mermaid-12\\.3\\.0/(mermaid\\.esm\\.min\\.mjs|relay-common-v1\\.mjs|chunks/mermaid\\.esm\\.min/[a-zA-Z0-9_-]+\\.mjs)"); }
     static boolean cacheableAsset(String path) { return CACHEABLE_ASSETS.contains(path) || mermaidModule(path); }
     private final Path downloads;
@@ -30,6 +30,9 @@ final class PublicContent {
             Map.entry("/html-preview.html","static/html-preview.html"), Map.entry("/html-renderer.js","static/html-renderer.js"),
             Map.entry("/share.js","static/share.js"), Map.entry("/share.css","static/share.css"),
             Map.entry("/account.js","static/account.js"),
+            Map.entry("/notifications.js","static/notifications.js"), Map.entry("/sw.js","static/sw.js"),
+            Map.entry("/manifest.webmanifest","static/manifest.webmanifest"),
+            Map.entry("/icons/relay-192.png","static/icons/relay-192.png"), Map.entry("/icons/relay-512.png","static/icons/relay-512.png"),
             Map.entry("/diagrams.js","static/diagrams.js"), Map.entry("/diagram.html","static/diagram.html"),
             Map.entry("/diagram-renderer.js","static/diagram-renderer.js"), Map.entry("/diagram.css","static/diagram.css"),
             Map.entry("/vendor/mermaid.min.js","static/vendor/mermaid.min.js"), Map.entry("/vendor/mermaid.LICENSE","static/vendor/mermaid.LICENSE"),
@@ -52,7 +55,7 @@ final class PublicContent {
         if (file!=null) {
             var resource=new ClassPathResource(file);
             if(!resource.exists())throw new ApiException(404,"页面不存在");
-            String mime=file.endsWith(".html") ? "text/html;charset=UTF-8" : file.endsWith(".css") ? "text/css;charset=UTF-8" : file.endsWith(".js") || file.endsWith(".mjs") ? "text/javascript;charset=UTF-8" : file.endsWith(".svg") ? "image/svg+xml" : "text/plain;charset=UTF-8";
+            String mime=file.endsWith(".html") ? "text/html;charset=UTF-8" : file.endsWith(".css") ? "text/css;charset=UTF-8" : file.endsWith(".js") || file.endsWith(".mjs") ? "text/javascript;charset=UTF-8" : file.endsWith(".webmanifest") ? "application/manifest+json" : file.endsWith(".png") ? "image/png" : file.endsWith(".svg") ? "image/svg+xml" : "text/plain;charset=UTF-8";
             var response=ResponseEntity.ok().contentType(MediaType.parseMediaType(mime)).contentLength(resource.contentLength());
             // Public versioned modules are also used by the opaque sandbox.
             // They contain no credentials and never accept credentialed CORS.
@@ -69,6 +72,7 @@ final class PublicContent {
                 // unversioned URLs immediately pick up a deployed update.
                 response.cacheControl(CacheControl.noCache().cachePublic()).eTag(tag);
             }
+            if(path.equals("/sw.js"))response.header("Cache-Control","no-store");
             return response.body(head ? null : resource);
         }
         if (path.equals("/downloads/current.json") || path.matches("/downloads/[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}/(SHA256SUMS|relayctl-(darwin|linux)-(amd64|arm64))")) {

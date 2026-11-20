@@ -18,6 +18,7 @@ async function signedInAs(reply) {
   showScreen('session-loading');
   $('session-loading-message').textContent='正在同步设备和会话…';
   await refresh();
+  if(signedIn) window.RelayNotifications?.login();
 }
 document.querySelectorAll('[data-auth-mode]').forEach(el=>el.addEventListener('click',()=>setAuthMode(el.dataset.authMode)));
 $('auth-form').addEventListener('submit',async e=>{

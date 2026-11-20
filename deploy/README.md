@@ -66,3 +66,24 @@ journalctl -u relay -n 100 --no-pager
 备份需要包含 MySQL、中转文件目录和 OSS 对应前缀。服务端没有对普通中转文件设置自动保留期；已发送的 OSS 图片保留，未发送草稿按图片文档清理。设备 0.5.3 起将收到的原图保存在设备配置目录，单轮回复结束和后台重启均保留，目前不自动清理。
 
 只在需要的设备上启用 `--allow-agent-writes`。文件读取遵循该设备系统用户权限；写入模式下 Claude 的 Bash 也拥有该用户权限。需要强隔离时使用独立系统用户或容器。
+
+## Web Push
+
+系统推送需要公开 HTTPS 地址及一份固定的 VAPID 密钥。没有配置时通知列表和 CLI 仍可使用，页面会提示推送未配置。使用仓库中的 JDK 17+ 脚本生成（不会覆盖已有文件，也不会打印密钥）：
+
+```bash
+sudo java scripts/WebPushKeys.java /etc/relay/web-push.json
+sudo chown root:relay /etc/relay/web-push.json
+sudo chmod 640 /etc/relay/web-push.json
+```
+
+在 `/etc/relay/application.properties` 增加：
+
+```properties
+relay.web-push.key-file=/etc/relay/web-push.json
+relay.web-push.subject=https://your-relay.example.com
+```
+
+`subject` 是公开的 HTTPS 联系地址或 `mailto:` 邮箱。重启 Relay 后生效。保留并私密备份密钥，升级时复用；更换密钥后浏览器必须重新开启通知。Docker 可将密钥文件只读挂载到容器，并用 `RELAY_WEB_PUSH_KEY_FILE`、`RELAY_WEB_PUSH_SUBJECT` 指定。服务端需能访问 Apple、Google FCM、Mozilla 的 HTTPS 推送接口；推送订阅接口仅接受已登录的浏览器，CLI SK 用于创建通知。
+
+通知正文保存在 MySQL，系统推送经过 RFC 8291 加密且只含通用提醒。订阅绑定账号登录会话，退出、过期、重置密码后不再向该订阅发送；已被浏览器厂商接受的推送无法撤回。临时失败从持久化队列重试，失效订阅自动停用，已读通知取消待发送推送。iPhone 的添加主屏幕及通知权限必须由用户操作，服务器不能代为开启。

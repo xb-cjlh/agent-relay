@@ -62,11 +62,14 @@ jobs:
           path.chmod(0o600)
           PY
       - name: HTTP and installation integration tests
-        run: python -m unittest discover -s tests -v
+        run: |
+          python -m pip install -r tests/requirements.txt
+          python -m unittest discover -s tests -v
       - name: Browser regressions
         run: |
           python -m pip install -r tests/requirements.txt
           python -m playwright install --with-deps chromium webkit
+          python tests/notifications_smoke.py
           python tests/auth_loading_smoke.py
           python tests/session_list_smoke.py
           python tests/session_pagination_smoke.py

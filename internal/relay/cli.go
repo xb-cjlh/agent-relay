@@ -29,6 +29,8 @@ const usage = `Relay · 跨设备 Agent 管理（Go）
   send AGENT PROMPT [--wait] [--timeout SECONDS]  发送指令（默认无执行时限，0 表示不限）
   jobs list|show ID|wait ID|cancel ID             查询或取消任务
   files list|pull|download                       远程文件传输
+  notify --title TITLE --body BODY [--agent ID]  向本人发送通知（正文可用 - 从 stdin 读取）
+  notifications list|read ID                    查看通知或标为已读
   skill install [--target both|codex|claude] [--force] 安装或更新 skill
   version                                       显示版本
 `
@@ -270,6 +272,61 @@ func Run(args []string) error {
 	}
 	if command == "daemon" {
 		return daemonCLI(c, args)
+	}
+	if command == "notify" {
+		o, e := parse(args, "title body agent job idempotency-key", "")
+		if e != nil {
+			return e
+		}
+		if len(o.pos) != 0 {
+			return errors.New("用法: relayctl notify --title TITLE --body BODY [--agent ID] [--job ID] [--idempotency-key KEY]")
+		}
+		title, e := o.required("title")
+		if e != nil {
+			return e
+		}
+		body, e := o.required("body")
+		if e != nil {
+			return e
+		}
+		if body == "-" {
+			data, err := io.ReadAll(io.LimitReader(os.Stdin, 8001))
+			if err != nil {
+				return err
+			}
+			body = string(data)
+		}
+		if len([]rune(title)) > 120 || len([]rune(body)) > 2000 {
+			return errors.New("通知标题最多 120 字，正文最多 2000 字")
+		}
+		payload := M{"title": title, "body": body}
+		for flag, field := range map[string]string{"agent": "agent", "job": "job", "idempotency-key": "idempotencyKey"} {
+			if value := o.get(flag, ""); value != "" {
+				payload[field] = value
+			}
+		}
+		result, e := c.Request("POST", "/api/notifications", payload)
+		if e != nil {
+			return e
+		}
+		return emit(result)
+	}
+	if command == "notifications" {
+		if len(args) == 1 && args[0] == "list" {
+			result, e := c.Request("GET", "/api/notifications", nil)
+			if e != nil {
+				return e
+			}
+			return emit(result)
+		}
+		if len(args) == 2 && args[0] == "read" && strings.HasPrefix(args[1], "ntf_") && !strings.ContainsAny(args[1], "/?#") {
+			result, e := c.Request("POST", "/api/notifications/"+args[1]+"/read", M{})
+			if e != nil {
+				return e
+			}
+			return emit(result)
+		}
+		return errors.New("用法: relayctl notifications list|read ID")
 	}
 	if command == "devices" {
 		if len(args) > 0 && args[0] == "merge" {

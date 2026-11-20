@@ -17,7 +17,8 @@ final class ApiController {
     private final ImageStore images;
     private final AttachmentStore files;
     private final ShareStore shares;
-    ApiController(Store store, PublicContent content,AuthService auth,ImageStore images,AttachmentStore files,ShareStore shares) { this.store=store; this.content=content;this.auth=auth;this.images=images;this.files=files;this.shares=shares; }
+    private final NotificationStore notifications;
+    ApiController(Store store, PublicContent content,AuthService auth,ImageStore images,AttachmentStore files,ShareStore shares,NotificationStore notifications) { this.store=store; this.content=content;this.auth=auth;this.images=images;this.files=files;this.shares=shares;this.notifications=notifications; }
 
     @RequestMapping("/**")
     ResponseEntity<?> handle(HttpServletRequest request) throws Exception {
@@ -76,6 +77,17 @@ final class ApiController {
         else if (method.equals("GET") && path.equals("/api/agents")) result=store.sessions(request.getParameter("device"),request.getParameter("q"),cursor,request.getParameter("directory_device"),request.getParameter("cwd"));
         else if (method.equals("GET") && path.equals("/api/directories")) result=store.recentDirectories(request.getParameter("device"));
         else if (method.equals("POST") && path.equals("/api/register")) result=store.register(body);
+        else if(method.equals("POST")&&path.equals("/api/notifications"))result=notifications.create(body);
+        else if(method.equals("GET")&&path.equals("/api/notifications"))result=notifications.list(cursor);
+        else if(method.equals("GET")&&path.matches("/api/notifications/ntf_[a-zA-Z0-9]+"))result=notifications.get(path.split("/")[3]);
+        else if(method.equals("POST")&&path.matches("/api/notifications/ntf_[a-zA-Z0-9]+/read"))result=notifications.read(path.split("/")[3]);
+        else if(method.equals("GET")&&path.equals("/api/push/config"))result=notifications.configuration();
+        else if(method.equals("POST")&&path.equals("/api/push/subscriptions")) {
+            auth.browser(auth.authenticate(request),request);result=notifications.register(body,auth.cookie(request));
+        }
+        else if(method.equals("POST")&&path.equals("/api/push/subscriptions/revoke")) {
+            auth.browser(auth.authenticate(request),request);result=notifications.unregister(body);
+        }
         else if (method.equals("POST") && path.equals("/api/devices/merge")) result=store.mergeDevices(body);
         else if (method.equals("POST") && path.equals("/api/agents")) result=store.createAgent(body);
         else if (method.equals("GET") && path.matches("/api/agents/[^/]+/messages")) result=store.conversation(path.split("/")[3],cursor);
@@ -113,11 +125,11 @@ final class ApiController {
         else if (method.equals("GET") && path.matches("/api/jobs/[^/]+")) result=store.job(path.split("/")[3]);
         else if (method.equals("POST") && path.matches("/api/jobs/[^/]+/cancel")) result=store.cancel(path.split("/")[3]);
         else if (method.equals("POST") && path.matches("/api/jobs/[^/]+/approvals/[^/]+")) result=store.decideApproval(path.split("/")[3],path.split("/")[5],body);
-        else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/approvals")) result=store.requestApproval(deviceId,path.split("/")[4],body);
+        else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/approvals")) {result=store.requestApproval(deviceId,path.split("/")[4],body);notifications.approval(object(result),path.split("/")[4]);}
         else if (method.equals("GET") && path.matches("/api/device/jobs/[^/]+/approvals/[^/]+")) result=store.approval(path.split("/")[4],path.split("/")[6],deviceId);
         else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/approvals/[^/]+/expire")) result=store.expireApproval(path.split("/")[4],path.split("/")[6],deviceId);
         else if (method.equals("POST") && path.equals("/api/device/poll")) result=store.poll(deviceId,body);
-        else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/complete")) result=store.complete(deviceId,path.split("/")[4],body);
+        else if (method.equals("POST") && path.matches("/api/device/jobs/[^/]+/complete")) {result=store.complete(deviceId,path.split("/")[4],body);notifications.completed(object(result));}
         else if (method.equals("GET") && path.equals("/api/files/cache")) result=map("file",store.fileStore.cached(required(map("device",request.getParameter("device")),"device"),required(map("path",request.getParameter("path")),"path")));
         else if (method.equals("GET") && path.matches("/api/files/[^/]+/url")) result=store.fileStore.url(path.split("/")[3]);
         else if (method.equals("GET") && path.matches("/api/file-preview/(file|att|img)_[a-zA-Z0-9]+")) result=store.fileStore.preview(path.split("/")[3]);

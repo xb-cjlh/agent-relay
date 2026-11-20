@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 const icons = {
   plus:'<path d="M12 5v14M5 12h14"/>', search:'<circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/>',
   monitor:'<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/>',
+  bell:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
   folder:'<path d="M3 8V5h6l3 3h9v12H3Z"/>', logout:'<path d="M9 4H4v16h5m6-13 5 5-5 5m-5-5h10"/>',
   close:'<path d="m6 6 12 12M6 18 18 6"/>', menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',
   expand:'<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
@@ -75,6 +76,7 @@ async function api(path, body, raw=false) {
 }
 
 async function logout(localOnly=false) {
+  await window.RelayNotifications?.logout(localOnly);
   if (!localOnly) await fetch('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json','X-Relay-Request':'1'},body:'{}'}).catch(()=>{});
   const cacheOwner = currentUser?.id;
   signedIn = false; currentUser = null; generation++; conversationRequest++;

@@ -23,3 +23,7 @@ relay.oss.access-key-id=SERVER_ONLY
 relay.oss.access-key-secret=SERVER_ONLY
 relay.oss.security-token=
 relay.oss.prefix=relay-prod/
+
+# Optional: generate a persistent VAPID key with scripts/WebPushKeys.java.
+# relay.web-push.key-file=/etc/relay/web-push.json
+relay.web-push.subject=https://relay.example.com

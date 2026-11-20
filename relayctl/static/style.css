@@ -362,3 +362,12 @@ a.file-entry-name { color: inherit; text-decoration: underline; text-underline-o
 .mermaid-engine { position:fixed;left:-10000px;top:0;width:1200px;height:800px;visibility:hidden;pointer-events:none;border:0; }
 .mermaid-source { border-top: 1px solid #e9eddf; }
 .mermaid-source summary { padding: 8px 12px; cursor: pointer; font-size: 11px; color: #7b806e; }
+
+#notification-count{margin-left:auto;font-size:12px;background:var(--accent,#bbf773);color:#17201d;border-radius:12px;padding:1px 7px}
+#notification-list{margin-top:20px}
+.notification-entry{display:block;width:100%;text-align:left;background:transparent;color:inherit;border:0;border-top:1px solid var(--border,#ddd);padding:16px 8px;cursor:pointer;overflow-wrap:anywhere}
+.notification-entry strong,.notification-entry span,.notification-entry small{display:block}
+.notification-entry span{white-space:pre-wrap;margin:7px 0;line-height:1.5}
+.notification-entry small{opacity:.65}
+.notification-entry.unread{border-left:3px solid #71974c}
+.notification-entry:focus-visible{outline:2px solid #71974c}

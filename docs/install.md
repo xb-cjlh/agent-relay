@@ -296,3 +296,23 @@ rm "$HOME/.local/bin/relayctl"
 链接中的分享 token 是此份快照的访问凭据，请仅发送给预期接收者。有效期结束或撤销后停止访问与签发附件地址；已经取得的 OSS 地址最多还能使用 5 分钟，并且不超过分享的到期时间，已下载的内容无法收回。完整 token 仅在生成时显示，服务端只保存 SHA-256 摘要；链接使用 `/share#shr-relay_...`，浏览器通过请求头提交 token，不将其放入请求路径或查询参数，分享页面不被搜索引擎索引。
 
 分享数据与账号隔离，服务重启后仍有效。会话和文件分享合计每个账号最多 50 个有效分享、64 MiB 快照元数据（原文件不计入）；单份会话最多 5000 条消息、8 MiB，超限时会提示而不会静默丢弃旧消息。撤销会清空快照及附件引用，到期快照在该账号下次生成分享时清理。本功能只需更新服务端，无需升级设备端 CLI。
+
+## 浏览器通知（Web Push）
+
+在网页侧栏打开「通知」，点击「开启本设备通知」，并允许系统权限。每个浏览器、每台设备分别开启；退出登录后停止推送，重新登录会重新绑定仍存在的订阅。通知列表按账号保存，即使没有开启系统推送也可查看。
+
+iPhone / iPad 需要 iOS 16.4+：先在 Safari 点分享 →「添加到主屏幕」，再从主屏幕打开 Relay、登录并开启通知。无需 Apple 开发者账号。桌面 Chrome、Firefox 和支持 Web Push 的 Safari 可直接开启。权限被拒绝后，需要在浏览器或系统设置中重新允许。
+
+Relay 发起的任务结束和审批请求会自动生成通知；本机直接运行的任务没有通过 Relay 执行时，不会自动推送。开启通知前的历史记录不会补发。系统推送只显示通用提醒，点击后登录查看详情或进入对应会话。推送依赖浏览器厂商服务及网络，不保证即时送达；后台会重试临时故障，24 小时后不再发送旧提醒。
+
+CLI 0.7.0+ 支持让 Agent 主动通知你，更新后重新安装 skill：
+
+```bash
+curl -fsSL https://relay.chaojibot.com/install.sh | bash
+relayctl skill install --target both --force
+relayctl notify --title '报告已生成' --body '可以查看结果了。' --agent AGENT_ID --idempotency-key report-JOB_ID
+relayctl notifications list
+relayctl notifications read NOTIFICATION_ID
+```
+
+`--agent`、`--job` 和 `--idempotency-key` 可选；重试同一条通知复用幂等键及内容。标题最多 120 字、正文最多 2000 字，每账号每小时最多 60 条主动通知；`--body -` 从标准输入读取正文。`push_queued` 代表排队数，不代表已经送达。服务端自建配置参见 [自建指南](https://github.com/xb-cjlh/agent-relay/blob/main/deploy/README.md)。
