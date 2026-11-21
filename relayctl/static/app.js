@@ -887,8 +887,33 @@ async function addAttachments(files) {
   } catch(error) {if(account===generation)toast(error.name==='AbortError'?'附件上传已取消或超时，请重试':error.message);}
   finally {clearTimeout(timeout);attachmentUploads.delete(controller);uploadingAttachments--;renderHeader();}
 }
-$('attach-image').addEventListener('click',()=>$('image-input').click());
-$('image-input').addEventListener('change',()=>{addAttachments($('image-input').files);$('image-input').value='';});
+let attachmentHadFocus=false,attachmentPickerOpening=false;
+$('attach-image').addEventListener('pointerdown',event=>{
+  attachmentHadFocus=matchMedia('(max-width: 760px)').matches&&document.activeElement===$('prompt');
+  // Keep the button in place until the tap completes; dismiss the keyboard in click.
+  if(attachmentHadFocus&&event.isPrimary&&event.button===0)event.preventDefault();
+});
+$('attach-image').addEventListener('pointercancel',()=>{attachmentHadFocus=false;});
+$('attach-image').addEventListener('click',async()=>{
+  if(attachmentPickerOpening||$('attach-image').disabled)return;
+  const account=generation,agent=selected;
+  const dismissKeyboard=matchMedia('(max-width: 760px)').matches&&(attachmentHadFocus||document.activeElement===$('prompt'));
+  attachmentHadFocus=false;attachmentPickerOpening=true;
+  try {
+    if(dismissKeyboard){
+      const previousHeight=window.visualViewport?.height||innerHeight;
+      $('prompt').blur();
+      await settleAttachmentViewport(previousHeight);
+      if(account!==generation||agent!==selected||!signedIn||$('attach-image').disabled)return;
+      // Opening within the tap's transient activation works in Safari; showPicker()
+      // does not reliably open file inputs in WebKit, so retain input.click().
+      if(navigator.userActivation&&!navigator.userActivation.isActive){toast('键盘已收起，请再点一次添加附件。');return;}
+    }
+    $('image-input').click();
+  } finally {attachmentPickerOpening=false;}
+});
+$('image-input').addEventListener('change',()=>{updateViewport();addAttachments($('image-input').files);$('image-input').value='';});
+$('image-input').addEventListener('cancel',()=>requestAnimationFrame(updateViewport));
 $('prompt').addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])];if(files.length){e.preventDefault();addAttachments(files);}});
 $('send-form').addEventListener('dragover',e=>{if(e.dataTransfer?.types.includes('Files'))e.preventDefault();});
 $('send-form').addEventListener('drop',e=>{if(e.dataTransfer?.files.length){e.preventDefault();addAttachments(e.dataTransfer.files);}});
@@ -901,10 +926,35 @@ function updateViewport() {
   document.documentElement.style.setProperty('--viewport-height',(viewport?.height||innerHeight)+'px');
   document.documentElement.style.setProperty('--viewport-top',(viewport?.offsetTop||0)+'px');
 }
+function settleAttachmentViewport(previousHeight) {
+  return new Promise(resolve=>{
+    const viewport=window.visualViewport;
+    const layoutHeight=Math.max(document.documentElement.clientHeight,innerHeight),started=performance.now();
+    const keyboardWasOpen=previousHeight<layoutHeight-80;
+    let quietTimer,limitTimer;
+    const finish=()=>{
+      clearTimeout(quietTimer);clearTimeout(limitTimer);
+      viewport?.removeEventListener('resize',changed);viewport?.removeEventListener('scroll',changed);
+      window.removeEventListener('resize',changed);
+      requestAnimationFrame(()=>{updateViewport();resolve();});
+    };
+    const changed=()=>{
+      clearTimeout(quietTimer);
+      // iOS may emit just one resize at the end of keyboard dismissal.
+      if(keyboardWasOpen&&(viewport?.height||innerHeight)<layoutHeight-40)return;
+      quietTimer=setTimeout(finish,Math.max(100,250-(performance.now()-started)));
+    };
+    viewport?.addEventListener('resize',changed);viewport?.addEventListener('scroll',changed);
+    window.addEventListener('resize',changed);
+    // Leave enough time for keyboard animation, within Safari's tap activation.
+    limitTimer=setTimeout(finish,500);changed();
+  });
+}
 window.visualViewport?.addEventListener('resize',updateViewport);
 window.visualViewport?.addEventListener('scroll',updateViewport);
 window.addEventListener('resize',updateViewport);
 window.addEventListener('resize',resizePrompt);
+window.addEventListener('focus',()=>requestAnimationFrame(updateViewport));
 document.addEventListener('focusin',()=>requestAnimationFrame(updateViewport));
 updateViewport();
 

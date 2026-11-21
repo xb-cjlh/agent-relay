@@ -21,6 +21,46 @@ if "[Relay attachments]" in prompt:
  prompt = "FILES:%d " % len(refs) + original
 '''
 
+def keyboard_attachment_picker(page, files):
+ """Real chooser activation after a simulated mobile keyboard closing animation."""
+ original=page.viewport_size;page.set_viewport_size({'width':390,'height':844})
+ field=page.locator('#prompt');field.fill('附件选择期间保留的草稿')
+ try:
+  for cancel in (True,False):
+   field.focus()
+   page.evaluate('''singleResize=>{
+    const viewport=visualViewport,full=innerHeight;
+    const resize=(height,top)=>{
+     Object.defineProperty(viewport,'height',{value:height,configurable:true});
+     Object.defineProperty(viewport,'offsetTop',{value:top,configurable:true});
+     viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));
+    };
+    resize(full/2,18);
+    document.getElementById('prompt').addEventListener('blur',()=>{
+     if(singleResize)setTimeout(()=>resize(full,0),260);
+     else {
+      setTimeout(()=>resize(full*.65,10),20);
+      setTimeout(()=>resize(full*.85,4),80);
+      setTimeout(()=>resize(full,0),150);
+     }
+    },{once:true});
+   }''',cancel)
+   with page.expect_file_chooser() as opened:page.locator('#attach-image').click()
+   chooser=opened.value
+   layout=page.evaluate('''()=>{
+    const box=id=>{const r=document.getElementById(id).getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom};};
+    return {button:box('attach-image'),input:box('image-input'),workspace:box('workspace'),height:innerHeight,keyboardFocused:document.activeElement.id==='prompt'};
+   }''')
+   assert not layout['keyboardFocused'] and abs(layout['workspace']['height']-layout['height'])<1,layout
+   assert layout['button']['y']>layout['height']-150,layout
+   assert all(abs(layout['button'][key]-layout['input'][key])<1 for key in ('x','y','width','height')),layout
+   chooser.set_files([] if cancel else files)
+   expect(field).to_have_value('附件选择期间保留的草稿')
+   expect(page.locator('#send-button')).to_be_in_viewport()
+ finally:
+  page.evaluate("()=>{delete visualViewport.height;delete visualViewport.offsetTop;visualViewport.dispatchEvent(new Event('resize'));}")
+  page.set_viewport_size(original)
+
 
 def main():
  with tempfile.TemporaryDirectory() as temporary:
@@ -65,7 +105,8 @@ def main():
       page.locator('[data-agent="'+agent['id']+'"]').click()
       assert page.locator('#image-input').get_attribute('accept') is None
       files = [{'name':'中文 report.pdf','mimeType':'application/pdf','buffer':b'%PDF-1.7\x00file fixture'}, {'name':'empty.txt','mimeType':'text/plain','buffer':b''}, {'name':'image.png','mimeType':'image/png','buffer':PNG}]
-      page.locator('#image-input').set_input_files(files)
+      if kind=='codex':keyboard_attachment_picker(page,files)
+      else:page.locator('#image-input').set_input_files(files)
       expect(page.locator('#attachment-list .attachment')).to_have_count(3)
       expect(page.locator('#attachment-list .file-attachment')).to_have_count(2)
       expect(page.locator('#attachment-list img')).to_have_count(1)
@@ -90,7 +131,7 @@ def main():
      assert all('data' not in r.post_data_json for r in posts)
      assert not errors, errors
      context.close(); browser.close()
-   print('PASS: desktop Chromium and mobile WebKit mixed file/image uploads, downloads, both agents, direct OSS, restart persistence')
+   print('PASS: Chromium and mobile WebKit keyboard-to-attachment chooser, cancel/draft preservation, mixed uploads, downloads, both agents, direct OSS, restart persistence')
   finally:
    if daemon and daemon.poll() is None:daemon.terminate(); daemon.communicate(timeout=8)
    server.close(); mail.close(); oss.close()
