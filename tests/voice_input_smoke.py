@@ -66,7 +66,7 @@ def main():
       # Cumulative duplicate events must not append final text a second time.
       page.evaluate("speechInstances.at(-1).emit([['检查这个项目',true],['并修复问题',true]])");expect(field).to_have_value('请帮我检查这个项目并修复问题，谢谢');assert not posts
       assert page.evaluate('id=>sessionStorage.getItem("relay-draft:"+id)',agents[0]['id'])==field.input_value()
-      release(page,mobile,outside=True);expect(mic).to_be_disabled();expect(send).to_be_disabled()
+      release(page,mobile,outside=True);expect(mic).to_have_attribute('aria-pressed','false');expect(mic).to_be_disabled();expect(send).to_be_disabled()
       page.evaluate("speechInstances.at(-1).emit([['检查这个项目',true],['并修复问题',true],['。',true]])");page.evaluate('speechInstances.at(-1).end()')
       expect(field).to_have_value('请帮我检查这个项目并修复问题。，谢谢');expect(send).to_be_enabled();assert not posts
       # Editing stays available during dictation; English segments get a word boundary.

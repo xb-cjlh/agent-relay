@@ -38,7 +38,7 @@ window.RelayVoice = (() => {
     if(current&&(!valid(current)||sending))cancel();
     const active=!!current;
     button.disabled=!signedIn||!selected||prompt.disabled||sending||current?.phase==='stopping';
-    button.setAttribute('aria-pressed',String(active));
+    button.setAttribute('aria-pressed',String(!!held));
     const label=active?current.phase==='stopping'?'正在结束语音输入':'松手结束语音输入':'按住说话';
     button.setAttribute('aria-label',label);
     button.title=active?label:supported?'按住麦克风说话，松手结束（也可按住空格或 Enter，识别后可编辑）':unavailable;
