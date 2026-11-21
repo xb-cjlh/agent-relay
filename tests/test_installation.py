@@ -145,6 +145,30 @@ class InstallationCase(unittest.TestCase):
         _,headers=self.request('/api/auth/session')
         self.assertIsNone(headers.get('Access-Control-Allow-Origin'))
 
+    def test_math_assets_are_public_local_and_versioned(self):
+        paths = {
+            '/vendor/katex-0.19.1/katex.min.js': 'text/javascript',
+            '/vendor/katex-0.19.1/katex.min.css': 'text/css',
+            '/vendor/katex-0.19.1/fonts/KaTeX_Main-Regular.woff2': 'font/woff2',
+            '/vendor/katex-0.19.1/fonts/KaTeX_Main-Regular.woff': 'font/woff',
+            '/vendor/katex-0.19.1/fonts/KaTeX_Main-Regular.ttf': 'font/ttf',
+            '/vendor/markdown-it-texmath-1.0.0.js': 'text/javascript',
+        }
+        for path, mime in paths.items():
+            data, headers = self.request(path)
+            self.assertIn(mime, headers['Content-Type'])
+            self.assertEqual(headers['Cache-Control'], 'public, max-age=31536000, immutable')
+            self.assertEqual((PROJECT/'relayctl/static'/path.lstrip('/')).read_bytes(), data)
+            _, head = self.request(path, 'HEAD')
+            self.assertEqual(len(data), int(head['Content-Length']))
+        for path in ['/math.js','/math.css']:
+            _, headers = self.request(path)
+            self.assertIn('no-cache', headers['Cache-Control'])
+            self.assertIn('public', headers['Cache-Control'])
+        for path in ['/vendor/katex-0.19.1/fonts/missing.woff2', '/vendor/katex-0.19.1/../../application.properties']:
+            with self.assertRaises(urllib.error.HTTPError) as missing: self.request(path)
+            self.assertEqual(404, missing.exception.code)
+
     def test_corrupted_download_never_replaces_existing_cli(self):
         dist=self.root/'downloads'; release=dist/'broken'; release.mkdir(parents=True)
         asset='relayctl-' + ('darwin' if os.uname().sysname=='Darwin' else 'linux') + '-' + ('arm64' if os.uname().machine in ['arm64','aarch64'] else 'amd64')

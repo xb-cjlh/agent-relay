@@ -459,6 +459,7 @@ $('approval-list').addEventListener('click',async event => {
 
 // HTML stays literal; model output cannot introduce page elements or scripts.
 const markdown = window.markdownit({html:false, breaks:true, linkify:true}).disable('image');
+markdown.use(markdownMath);
 const validateMarkdownLink = markdown.validateLink.bind(markdown);
 markdown.validateLink = href => validateMarkdownLink(href) || !!localFileLink(href);
 markdown.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
@@ -550,6 +551,7 @@ function renderMessages() {
   }
   for (const node of existing.values()) node.remove();
   loadImages(container);
+  renderMath(container);
   renderDiagrams(container);
   $('thread-empty').hidden = visible.length > 0;
 }

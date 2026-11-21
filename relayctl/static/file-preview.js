@@ -255,6 +255,7 @@ function renderFilePreview(preview) {
     const article = document.createElement('article'); article.className = 'file-markdown message assistant';
     article.innerHTML = '<div class="message-body">' + richText(source.text,{deviceId:preview.deviceId,base:preview.path.slice(0,preview.path.lastIndexOf('/')) || '/',path:preview.path}) + '</div>';
     container.append(article);
+    renderMath(article);
     renderDiagrams(article);
     if (preview.fragment) {
       const slug = value => value.toLowerCase().trim().replace(/[^\p{L}\p{N}\s_-]/gu,'').replace(/\s+/g,'-');

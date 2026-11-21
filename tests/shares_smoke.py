@@ -7,6 +7,7 @@ from auth_support import Mailbox
 from oss_support import OssFixture, upload_image, claims, put
 from test_accounts import PNG
 from test_relay import TOKEN
+from markdown_smoke import MATH, assert_math
 from playwright.sync_api import sync_playwright, expect
 
 
@@ -28,7 +29,7 @@ def main():
    job=client.request('POST','/api/jobs',{'kind':'prompt','agent':agent['id'],'prompt':'See image and file','images':[image['id']],'files':[file['id']]})
    dev.request('POST','/api/device/poll',{'capacity':1})
    output='# Shared answer\n\n**Markdown works**\n\n[local file](private.txt)\n\n<script>window.pwned=true</script>\n\n```mermaid\nflowchart LR\n A-->B\n```\n'
-   dev.request('POST','/api/device/jobs/'+job['id']+'/complete',{'status':'succeeded','output':output,'diagnostics':'private diagnostic'})
+   dev.request('POST','/api/device/jobs/'+job['id']+'/complete',{'status':'succeeded','output':output+MATH,'diagnostics':'private diagnostic'})
    with sync_playwright() as p:
     chrome=Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
     for engine,mobile in ((p.chromium,False),(p.webkit,True)):
@@ -48,7 +49,8 @@ def main():
      expect(public.locator('#share-title')).to_have_text('A shared conversation')
      assert not public.locator('#login').count() and not public.locator('#prompt').count()
      expect(public.locator('#share-messages h1')).to_have_text('Shared answer')
-     expect(public.locator('#share-messages strong')).to_have_text('Markdown works')
+     expect(public.locator('#share-messages strong').first).to_have_text('Markdown works')
+     assert_math(public,public.locator('#share-messages .assistant .message-body').last)
      public.locator('#share-messages img').scroll_into_view_if_needed()
      expect(public.locator('#share-messages img')).to_have_js_property('naturalWidth',1)
      expect(public.locator('iframe.mermaid-frame')).to_have_count(1,timeout=30000)

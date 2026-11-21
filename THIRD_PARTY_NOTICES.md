@@ -4,6 +4,8 @@ Relay is distributed under the [MIT License](LICENSE). Dependencies and bundled 
 
 - **SparkMD5** — André Cruz and contributors, WTFPL Version 2. The bundled browser library is in `relayctl/static/vendor/spark-md5.min.js`; its full license is preserved in [`spark-md5.LICENSE`](relayctl/static/vendor/spark-md5.LICENSE). Source: https://github.com/satazor/js-spark-md5.
 - **markdown-it 15.0.3** — Vitaly Puzrin, Alex Kocharin and contributors, MIT. The bundled browser library is in `relayctl/static/vendor/markdown-it.min.js`; its license and the licenses of its bundled dependencies are preserved in [`markdown-it.LICENSE`](relayctl/static/vendor/markdown-it.LICENSE). Source: https://github.com/markdown-it/markdown-it.
+- **KaTeX 0.19.1** — Khan Academy and contributors, MIT. The browser renderer, stylesheet and fonts are bundled in `relayctl/static/vendor/katex-0.19.1/`; the full license is preserved in [`LICENSE`](relayctl/static/vendor/katex-0.19.1/LICENSE). Source: https://github.com/KaTeX/KaTeX.
+- **markdown-it-texmath 1.0.0** — Stefan Goessner, MIT. The bundled parser is in `relayctl/static/vendor/markdown-it-texmath-1.0.0.js`; the full license is preserved in [`markdown-it-texmath.LICENSE`](relayctl/static/vendor/markdown-it-texmath.LICENSE). Source: https://github.com/goessner/markdown-it-texmath.
 - **Gorilla WebSocket** — Gorilla WebSocket authors, BSD-2-Clause. The dependency is declared in `go.mod`; source and license: https://github.com/gorilla/websocket.
 - Java dependencies are declared in `server/pom.xml` and resolved by Maven with their original licenses, including Spring Boot, Spring Security Crypto, MySQL Connector/J, Flyway, Alibaba Cloud OSS SDK and their transitive dependencies.
 

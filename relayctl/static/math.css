@@ -1,0 +1,8 @@
+.math-formula { overflow-wrap: normal; }
+.math-formula .katex { font-size: 1.1em; }
+.math-display { display: block; max-width: 100%; overflow-x: auto; overflow-y: hidden; margin: 12px 0; padding: 4px 0; }
+.math-display .katex-display { margin: 0; }
+.math-display .katex-display > .katex { display: block; width: max-content; min-width: 100%; padding: 2px; }
+.math-display:focus-visible { outline: 2px solid #73936a; outline-offset: 2px; border-radius: 4px; }
+.math-number { display: block; text-align: right; font-size: .9em; }
+.math-fallback { font-family: ui-monospace, monospace; white-space: pre-wrap; }

@@ -7,6 +7,7 @@ from auth_support import Mailbox
 from oss_support import OssFixture, upload_image, claims, put
 from test_accounts import PNG
 from test_relay import TOKEN
+from markdown_smoke import MATH, assert_math
 from playwright.sync_api import sync_playwright, expect
 
 
@@ -19,6 +20,7 @@ def main():
    device=client.request('POST','/api/register',{'name':'private-device','platform':'test','roots':[],'capabilities':{'codex':True,'file_input':True,'image_input':True,'unlimited_tasks':True}})
    dev=Client(url,device['token'])
    content=b'# Shared document\n\n**Preview works**\n\n[private sibling](secret.txt)\n\n<script>window.pwned=true</script>\n\n```mermaid\nflowchart LR\n A-->B\n```\n'
+   content += MATH.encode()
    job=client.request('POST','/api/jobs',{'kind':'file_read','device':device['id'],'path':'/private/note.md'})
    dev.request('POST','/api/device/poll',{'capacity':1})
    artifact=dev.request('POST','/api/device/jobs/'+job['id']+'/complete',{'status':'succeeded','file':{'name':'note.md','data':base64.b64encode(content).decode(),'sha256':hashlib.sha256(content).hexdigest()}})['artifact_id']
@@ -40,12 +42,14 @@ def main():
      page.evaluate('id=>selectAgent(id)',agent['id'])
      page.locator('#messages [data-file-link]').click()
      expect(page.locator('#file-preview-content h1')).to_have_text('Shared document')
+     assert_math(page,page.locator('#file-preview-content'))
      page.locator('#share-file-preview').click();expect(page.locator('#share-title')).to_have_text('分享文件')
      page.locator('#share-duration').select_option('3600');page.locator('#share-form button').click()
      expect(page.locator('#share-result')).to_be_visible();link=page.locator('#share-link').input_value()
      reader=browser.new_context(**(p.devices['iPhone 13'] if mobile else {}));public=reader.new_page();requests=[]
      public.on('pageerror',lambda e:errors.append(str(e)));public.on('request',lambda r:requests.append(r));public.goto(link)
-     expect(public.locator('#share-title')).to_have_text('note.md');expect(public.locator('#shared-file-content strong')).to_have_text('Preview works')
+     expect(public.locator('#share-title')).to_have_text('note.md');expect(public.locator('#shared-file-content strong').first).to_have_text('Preview works')
+     assert_math(public,public.locator('#shared-file-content'))
      expect(public.locator('iframe.mermaid-frame')).to_have_count(1,timeout=30000)
      assert public.evaluate('window.pwned') is None
      assert 'private answer' not in public.locator('body').inner_text()

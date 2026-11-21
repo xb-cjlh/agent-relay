@@ -9,6 +9,7 @@ if(privateFile)$('share-access').textContent='文件预览';
 let expiresAt=0,before=null,kind='',expired=false,expiryTimer;
 let sharedFile=null,fileObjectUrl=null,previewRequest=null;
 const markdown=window.markdownit({html:false,breaks:true,linkify:true}).disable('image');
+markdown.use(markdownMath);
 markdown.renderer.rules.link_open=(tokens,index,options,env,renderer)=>{
   const href=tokens[index].attrGet('href')||'';
   if(!/^(https?:|mailto:)/i.test(href)) {
@@ -79,7 +80,7 @@ function render(messages,prepend) {
   }
   if(prepend)$('share-messages').prepend(fragment);else $('share-messages').replaceChildren(fragment);
   for(const img of $('share-messages').querySelectorAll('img[data-image]:not([src])'))loadImage(img);
-  renderDiagrams($('share-messages'));
+  renderMath($('share-messages'));renderDiagrams($('share-messages'));
 }
 async function load(older=false) {
   $('share-older').disabled=true;$('share-retry').hidden=true;
@@ -145,7 +146,7 @@ async function previewSharedFile() {
     if(['md','markdown','mdown'].includes(ext)) {
       const article=document.createElement('article');article.className='file-markdown message assistant';
       article.innerHTML='<div class="message-body">'+markdown.render(source.text,{source:source.text})+'</div>';
-      container.append(article);renderDiagrams(article);
+      container.append(article);renderMath(article);renderDiagrams(article);
     } else {
       const pre=document.createElement('pre');pre.className='file-source';
       pre.innerHTML=source.text.split('\n').map(line=>`<span class="file-source-line">${esc(line)||'\n'}</span>`).join('');container.append(pre);
