@@ -373,6 +373,26 @@ a.file-entry-name { color: inherit; text-decoration: underline; text-underline-o
 .notification-entry:focus-visible{outline:2px solid #71974c}
 
 #voice-input[aria-pressed="true"] { color: #b34035; background: #fae9e6; }
-.voice-status { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--muted,#6d7762); font-size: 12px; line-height: 1.5; }
+.voice-status { margin-bottom: 10px; padding: 10px 12px; border-radius: 8px; background: #f0f4e9; color: #526347; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.composer:has(#voice-input[aria-pressed="true"]) .voice-status { background: #faeeeb; color: #963f35; }
 .voice-preview { display: block; max-height: 4.5em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #46543b; }
+.voice-preview:not(:empty) { margin-top: 5px; }
+.voice-input-label { display: none; }
 #voice-input { flex-shrink: 0; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+@media (max-width: 760px) {
+  .composer-actions { flex-wrap: wrap; gap: 8px; }
+  .composer-actions > .composer-options { flex: 1 1 130px; min-width: 130px; gap: 6px; }
+  .composer-actions > .composer-controls { flex-shrink: 0; margin-left: auto; gap: 8px; }
+  .composer-options .permission-select { flex: 1; max-width: 155px; min-height: 44px; }
+  #attach-image { width: 36px; height: 44px; flex-shrink: 0; }
+  .composer-controls .send-button { width: 44px; height: 44px; flex-shrink: 0; }
+  .composer-controls .stop-button { width: 44px; height: 44px; flex-shrink: 0; justify-content: center; }
+  .stop-label { display: none; }
+  #voice-input { min-width: 44px; height: 44px; gap: 6px; padding: 0 10px; border: 1px solid #d7e3cb; border-radius: 10px; background: #edf3e6; color: #3b5b3c; }
+  .voice-input-label { display: inline; font-size: 12px; font-weight: 500; white-space: nowrap; }
+  .composer-actions:has(#stop-generation:not([hidden])) .voice-input-label { display: none; }
+  .voice-preview { font-size: 14px; }
+}
+@media (max-width: 360px) {
+  .voice-input-label { display: none; }
+}
