@@ -22,9 +22,23 @@ if "[Relay attachments]" in prompt:
 '''
 
 def keyboard_attachment_picker(page, files):
- """Real chooser activation after a simulated mobile keyboard closing animation."""
+ """A trusted native tap opens the chooser even when synthetic file clicks are blocked."""
  original=page.viewport_size;page.set_viewport_size({'width':390,'height':844})
  field=page.locator('#prompt');field.fill('附件选择期间保留的草稿')
+ page.evaluate('''()=>{
+  const original=HTMLInputElement.prototype.click,input=document.getElementById('image-input');
+  window.attachmentNativeClicks=[];
+  HTMLInputElement.prototype.click=function(){
+   if(this.type==='file')throw new Error('Synthetic file clicks blocked: native activation required');
+   return original.call(this);
+  };
+  const record=event=>{
+   const box=id=>{const r=document.getElementById(id).getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom};};
+   attachmentNativeClicks.push({trusted:event.isTrusted,button:box('attach-image'),input:box('image-input'),workspace:box('workspace'),height:innerHeight,keyboardFocused:document.activeElement.id==='prompt'});
+  };
+  input.addEventListener('click',record);
+  window.restoreAttachmentClick=()=>{HTMLInputElement.prototype.click=original;input.removeEventListener('click',record);};
+ }''')
  try:
   for cancel in (True,False):
    field.focus()
@@ -45,20 +59,19 @@ def keyboard_attachment_picker(page, files):
      }
     },{once:true});
    }''',cancel)
-   with page.expect_file_chooser() as opened:page.locator('#attach-image').click()
+   assert page.evaluate('Math.abs(document.getElementById("workspace").getBoundingClientRect().height-visualViewport.height)<1')
+   with page.expect_file_chooser() as opened:page.locator('#image-input').click()
    chooser=opened.value
-   layout=page.evaluate('''()=>{
-    const box=id=>{const r=document.getElementById(id).getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom};};
-    return {button:box('attach-image'),input:box('image-input'),workspace:box('workspace'),height:innerHeight,keyboardFocused:document.activeElement.id==='prompt'};
-   }''')
+   layout=page.evaluate('attachmentNativeClicks.at(-1)');assert layout['trusted'],layout
    assert not layout['keyboardFocused'] and abs(layout['workspace']['height']-layout['height'])<1,layout
    assert layout['button']['y']>layout['height']-150,layout
    assert all(abs(layout['button'][key]-layout['input'][key])<1 for key in ('x','y','width','height')),layout
+   page.wait_for_function('()=>visualViewport.height===innerHeight')
    chooser.set_files([] if cancel else files)
    expect(field).to_have_value('附件选择期间保留的草稿')
    expect(page.locator('#send-button')).to_be_in_viewport()
  finally:
-  page.evaluate("()=>{delete visualViewport.height;delete visualViewport.offsetTop;visualViewport.dispatchEvent(new Event('resize'));}")
+  page.evaluate("()=>{restoreAttachmentClick();delete visualViewport.height;delete visualViewport.offsetTop;visualViewport.dispatchEvent(new Event('resize'));}")
   page.set_viewport_size(original)
 
 
@@ -131,7 +144,7 @@ def main():
      assert all('data' not in r.post_data_json for r in posts)
      assert not errors, errors
      context.close(); browser.close()
-   print('PASS: Chromium and mobile WebKit keyboard-to-attachment chooser, cancel/draft preservation, mixed uploads, downloads, both agents, direct OSS, restart persistence')
+   print('PASS: Chromium and mobile WebKit trusted native attachment picker with synthetic clicks blocked, keyboard layout, cancel/drafts, mixed uploads, downloads, both agents, direct OSS, restart persistence')
   finally:
    if daemon and daemon.poll() is None:daemon.terminate(); daemon.communicate(timeout=8)
    server.close(); mail.close(); oss.close()

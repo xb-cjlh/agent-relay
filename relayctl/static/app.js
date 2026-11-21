@@ -372,6 +372,7 @@ function renderHeader() {
   $('send-button').disabled = !!window.RelayVoice?.active() || sending || uploadingAttachments > 0 || !agent || readOnly || upgradeRequired || (!$('prompt').value.trim() && !(attachmentDrafts.get(selected)?.length));
   window.RelayVoice?.render();
   $('attach-image').disabled = sending || uploadingAttachments > 0 || !agent || readOnly || !(device?.capabilities.image_input || device?.capabilities.file_input);
+  $('image-input').disabled = $('attach-image').disabled;
   $('attach-image').title = device?.capabilities.file_input ? '添加附件（单文件最大 16 MiB，每条最多 8 个）' : device?.capabilities.image_input ? '可添加图片；发送其他文件需升级目标设备 Relay 至 0.6.9 并重启' : '请升级目标设备 Relay 至 0.6.9 并重启，以发送附件';
   renderAttachments();
   $('stop-generation').hidden = !activeJobs.some(j => j.status === 'running');
@@ -887,33 +888,19 @@ async function addAttachments(files) {
   } catch(error) {if(account===generation)toast(error.name==='AbortError'?'附件上传已取消或超时，请重试':error.message);}
   finally {clearTimeout(timeout);attachmentUploads.delete(controller);uploadingAttachments--;renderHeader();}
 }
-let attachmentHadFocus=false,attachmentPickerOpening=false;
-$('attach-image').addEventListener('pointerdown',event=>{
-  attachmentHadFocus=matchMedia('(max-width: 760px)').matches&&document.activeElement===$('prompt');
-  // Keep the button in place until the tap completes; dismiss the keyboard in click.
-  if(attachmentHadFocus&&event.isPrimary&&event.button===0)event.preventDefault();
+let attachmentViewportHeight=null;
+$('image-input').addEventListener('click',event=>{
+  if($('image-input').disabled||!signedIn||!selected){event.preventDefault();return;}
+  if(!matchMedia('(max-width: 760px)').matches)return;
+  const viewport=window.visualViewport,layoutHeight=Math.max(document.documentElement.clientHeight,innerHeight);
+  // Let the real input's default action open the picker within this trusted tap.
+  // Use the keyboard-free layout before Safari reads its popover anchor rect.
+  attachmentViewportHeight=viewport&&Math.abs(viewport.scale-1)<0.05&&viewport.height<layoutHeight-80?layoutHeight:null;
+  $('prompt').blur();updateViewport();
 });
-$('attach-image').addEventListener('pointercancel',()=>{attachmentHadFocus=false;});
-$('attach-image').addEventListener('click',async()=>{
-  if(attachmentPickerOpening||$('attach-image').disabled)return;
-  const account=generation,agent=selected;
-  const dismissKeyboard=matchMedia('(max-width: 760px)').matches&&(attachmentHadFocus||document.activeElement===$('prompt'));
-  attachmentHadFocus=false;attachmentPickerOpening=true;
-  try {
-    if(dismissKeyboard){
-      const previousHeight=window.visualViewport?.height||innerHeight;
-      $('prompt').blur();
-      await settleAttachmentViewport(previousHeight);
-      if(account!==generation||agent!==selected||!signedIn||$('attach-image').disabled)return;
-      // Opening within the tap's transient activation works in Safari; showPicker()
-      // does not reliably open file inputs in WebKit, so retain input.click().
-      if(navigator.userActivation&&!navigator.userActivation.isActive){toast('键盘已收起，请再点一次添加附件。');return;}
-    }
-    $('image-input').click();
-  } finally {attachmentPickerOpening=false;}
-});
-$('image-input').addEventListener('change',()=>{updateViewport();addAttachments($('image-input').files);$('image-input').value='';});
-$('image-input').addEventListener('cancel',()=>requestAnimationFrame(updateViewport));
+function finishAttachmentPicker(){attachmentViewportHeight=null;requestAnimationFrame(updateViewport);}
+$('image-input').addEventListener('change',()=>{finishAttachmentPicker();addAttachments($('image-input').files);$('image-input').value='';});
+$('image-input').addEventListener('cancel',finishAttachmentPicker);
 $('prompt').addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])];if(files.length){e.preventDefault();addAttachments(files);}});
 $('send-form').addEventListener('dragover',e=>{if(e.dataTransfer?.types.includes('Files'))e.preventDefault();});
 $('send-form').addEventListener('drop',e=>{if(e.dataTransfer?.files.length){e.preventDefault();addAttachments(e.dataTransfer.files);}});
@@ -923,39 +910,18 @@ function updateViewport() {
   const viewport=window.visualViewport;
   // Ignore pinch zoom; preserve the user's zoom gesture and accessibility controls.
   if(viewport && Math.abs(viewport.scale-1)>0.05) return;
-  document.documentElement.style.setProperty('--viewport-height',(viewport?.height||innerHeight)+'px');
-  document.documentElement.style.setProperty('--viewport-top',(viewport?.offsetTop||0)+'px');
-}
-function settleAttachmentViewport(previousHeight) {
-  return new Promise(resolve=>{
-    const viewport=window.visualViewport;
-    const layoutHeight=Math.max(document.documentElement.clientHeight,innerHeight),started=performance.now();
-    const keyboardWasOpen=previousHeight<layoutHeight-80;
-    let quietTimer,limitTimer;
-    const finish=()=>{
-      clearTimeout(quietTimer);clearTimeout(limitTimer);
-      viewport?.removeEventListener('resize',changed);viewport?.removeEventListener('scroll',changed);
-      window.removeEventListener('resize',changed);
-      requestAnimationFrame(()=>{updateViewport();resolve();});
-    };
-    const changed=()=>{
-      clearTimeout(quietTimer);
-      // iOS may emit just one resize at the end of keyboard dismissal.
-      if(keyboardWasOpen&&(viewport?.height||innerHeight)<layoutHeight-40)return;
-      quietTimer=setTimeout(finish,Math.max(100,250-(performance.now()-started)));
-    };
-    viewport?.addEventListener('resize',changed);viewport?.addEventListener('scroll',changed);
-    window.addEventListener('resize',changed);
-    // Leave enough time for keyboard animation, within Safari's tap activation.
-    limitTimer=setTimeout(finish,500);changed();
-  });
+  document.documentElement.style.setProperty('--viewport-height',(attachmentViewportHeight??viewport?.height??innerHeight)+'px');
+  document.documentElement.style.setProperty('--viewport-top',(attachmentViewportHeight!==null?0:viewport?.offsetTop||0)+'px');
 }
 window.visualViewport?.addEventListener('resize',updateViewport);
 window.visualViewport?.addEventListener('scroll',updateViewport);
 window.addEventListener('resize',updateViewport);
 window.addEventListener('resize',resizePrompt);
 window.addEventListener('focus',()=>requestAnimationFrame(updateViewport));
-document.addEventListener('focusin',()=>requestAnimationFrame(updateViewport));
+document.addEventListener('focusin',event=>{
+  if(event.target!==$('image-input'))attachmentViewportHeight=null;
+  requestAnimationFrame(updateViewport);
+});
 updateViewport();
 
 let shareTarget=null,shareRequest=0;
