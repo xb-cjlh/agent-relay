@@ -371,3 +371,8 @@ a.file-entry-name { color: inherit; text-decoration: underline; text-underline-o
 .notification-entry small{opacity:.65}
 .notification-entry.unread{border-left:3px solid #71974c}
 .notification-entry:focus-visible{outline:2px solid #71974c}
+
+#voice-input[aria-pressed="true"] { color: #b34035; background: #fae9e6; }
+.voice-status { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--muted,#6d7762); font-size: 12px; line-height: 1.5; }
+.voice-preview { display: block; max-height: 4.5em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #46543b; }
+#voice-input { flex-shrink: 0; }

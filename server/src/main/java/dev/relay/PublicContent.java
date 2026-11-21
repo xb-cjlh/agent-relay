@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 final class PublicContent {
-    private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/notifications.js","/manifest.webmanifest","/icons/relay-192.png","/icons/relay-512.png","/diagrams.js","/diagram-renderer.js","/diagram.css","/vendor/mermaid.min.js","/file-cache.js","/file-preview.js","/file-text.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
+    private static final Set<String> CACHEABLE_ASSETS = Set.of("/app.js","/voice-input.js","/notifications.js","/manifest.webmanifest","/icons/relay-192.png","/icons/relay-512.png","/diagrams.js","/diagram-renderer.js","/diagram.css","/vendor/mermaid.min.js","/file-cache.js","/file-preview.js","/file-text.js","/account.js","/image-upload.js","/style.css","/favicon.svg","/docs.js","/docs.css","/vendor/spark-md5.min.js","/vendor/markdown-it.min.js");
     static boolean mermaidModule(String path) { return path.matches("/vendor/mermaid-12\\.3\\.0/(mermaid\\.esm\\.min\\.mjs|relay-common-v1\\.mjs|chunks/mermaid\\.esm\\.min/[a-zA-Z0-9_-]+\\.mjs)"); }
     static boolean cacheableAsset(String path) { return CACHEABLE_ASSETS.contains(path) || mermaidModule(path); }
     private final Path downloads;
@@ -25,6 +25,7 @@ final class PublicContent {
     ResponseEntity<?> get(String path, boolean head) throws Exception {
         String file=Map.ofEntries(
             Map.entry("/","static/index.html"), Map.entry("/app.js","static/app.js"),
+            Map.entry("/voice-input.js","static/voice-input.js"),
             Map.entry("/share","static/share.html"), Map.entry("/share/","static/share.html"),
             Map.entry("/file","static/share.html"), Map.entry("/file/","static/share.html"),
             Map.entry("/html-preview.html","static/html-preview.html"), Map.entry("/html-renderer.js","static/html-renderer.js"),

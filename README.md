@@ -20,6 +20,8 @@ Relay 让你在一个工作台管理各台电脑上的 Codex 和 Claude Code 会
 
 在侧栏「通知」开启 Web Push，仅接收 Agent 主动发送的提醒，任务结束和审批请求不会自动通知。iPhone 需先通过 Safari 添加到主屏幕（iOS 16.4+），无需付费 Apple 开发者账号。CLI 0.7.0+ 支持 `relayctl notify --title '完成' --body '结果已就绪'`，详见 [通知设置](docs/install.md#浏览器通知web-push)。
 
+会话输入框支持语音转文字：点击麦克风开始或停止，识别结果可编辑后发送。使用浏览器原生语音服务，优先中文；浏览器不支持时可用系统键盘听写，详见 [语音输入](docs/install.md#语音输入)。
+
 ## 安装到设备
 
 完整的 [安装与使用文档](https://relay.chaojibot.com/docs/) 已放到服务端，包括 CLI 下载、令牌配置、skill 安装、后台自启、检查、更新和卸载；源码文档为 [docs/install.md](docs/install.md)。设备无需构建源码。

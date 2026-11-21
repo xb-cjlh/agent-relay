@@ -12,6 +12,7 @@ const icons = {
   share:'<path d="M12 16V3m-4 4 4-4 4 4M5 12v8h14v-8"/>',
   up:'<path d="M12 19V5m-5 5 5-5 5 5"/>', down:'<path d="M12 5v14m-5-5 5 5 5-5"/>',
   stop:'<rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/>',
+  microphone:'<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/>',
   attachment:'<path d="m21 11-9 9a6 6 0 0 1-8.5-8.5l10-10a4 4 0 0 1 5.7 5.7l-10 10a2 2 0 0 1-2.8-2.8l9-9"/>',
   image:'<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 6-6 4 4 3-3 5 5"/>',
   key:'<circle cx="8" cy="8" r="4"/><path d="m11 11 9 9m-4-4 3-3m-6 0 3-3"/>',
@@ -76,8 +77,10 @@ async function api(path, body, raw=false) {
 }
 
 async function logout(localOnly=false) {
+  window.RelayVoice?.cancel();
   await window.RelayNotifications?.logout(localOnly);
   if (!localOnly) await fetch('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json','X-Relay-Request':'1'},body:'{}'}).catch(()=>{});
+  window.RelayVoice?.cancel();
   const cacheOwner = currentUser?.id;
   signedIn = false; currentUser = null; generation++; conversationRequest++;
   clearDiagrams();
@@ -311,6 +314,7 @@ function renderSessions() {
 }
 
 function selectAgent(id,closeSidebar=true,load=true) {
+  window.RelayVoice?.cancel();
   closeFilePreview(false);
   if (selected) { drafts.set(selected, $('prompt').value); sessionStorage.setItem('relay-draft:' + selected, $('prompt').value); }
   selected = id; conversationRequest++; messages = new Map(); activeJobs = []; approvals = []; renderApprovals(); firstMessages = true;
@@ -361,7 +365,8 @@ function renderHeader() {
   $('permission-note').hidden = mode.hidden || mode.value === 'device';
   $('permission-note').textContent = mode.value === 'full' ? '完全访问：允许以设备用户权限访问文件和网络，不再逐项审批。仅对随后发送的消息生效。' : (agent?.kind === 'claude' ? '按需审批：遵循 Claude 本机权限规则，需要确认的工具调用会显示在此处。' : '按需审批：项目内操作可直接执行，需要额外权限时在此确认。');
   $('prompt').disabled = !agent || !!readOnly;
-  $('send-button').disabled = sending || uploadingAttachments > 0 || !agent || readOnly || upgradeRequired || (!$('prompt').value.trim() && !(attachmentDrafts.get(selected)?.length));
+  $('send-button').disabled = !!window.RelayVoice?.active() || sending || uploadingAttachments > 0 || !agent || readOnly || upgradeRequired || (!$('prompt').value.trim() && !(attachmentDrafts.get(selected)?.length));
+  window.RelayVoice?.render();
   $('attach-image').disabled = sending || uploadingAttachments > 0 || !agent || readOnly || !(device?.capabilities.image_input || device?.capabilities.file_input);
   $('attach-image').title = device?.capabilities.file_input ? '添加附件（单文件最大 16 MiB，每条最多 8 个）' : device?.capabilities.image_input ? '可添加图片；发送其他文件需升级目标设备 Relay 至 0.6.9 并重启' : '请升级目标设备 Relay 至 0.6.9 并重启，以发送附件';
   renderAttachments();
@@ -722,7 +727,7 @@ $('prompt').addEventListener('keydown',e => {
 $('send-form').addEventListener('submit',async e => {
   e.preventDefault();
   const text = $('prompt').value.trim(), id = selected, attachments = [...(attachmentDrafts.get(selected)||[])];
-  if ((!text && !attachments.length) || uploadingAttachments || !id || sending || $('prompt').disabled) return;
+  if (window.RelayVoice?.active() || (!text && !attachments.length) || uploadingAttachments || !id || sending || $('prompt').disabled) return;
   sending = true; renderHeader();
   try {
     await api('jobs',{kind:'prompt',agent:id,prompt:text,images:attachments.filter(isImageAttachment).map(item=>item.id),files:attachments.filter(item=>!isImageAttachment(item)).map(item=>item.id),permission_mode:$('permission-mode').hidden ? 'device' : $('permission-mode').value});
