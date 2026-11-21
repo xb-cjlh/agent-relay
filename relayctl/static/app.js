@@ -364,7 +364,11 @@ function renderHeader() {
   mode.title = !permissionCapable ? '请升级目标设备 Relay 至 0.6.0 并重启后台进程' : !device?.capabilities.writable ? '请先在目标设备启用 --allow-agent-writes' : '执行权限从下一条消息生效';
   $('permission-note').hidden = mode.hidden || mode.value === 'device';
   $('permission-note').textContent = mode.value === 'full' ? '完全访问：允许以设备用户权限访问文件和网络，不再逐项审批。仅对随后发送的消息生效。' : (agent?.kind === 'claude' ? '按需审批：遵循 Claude 本机权限规则，需要确认的工具调用会显示在此处。' : '按需审批：项目内操作可直接执行，需要额外权限时在此确认。');
+  $('permission-control').hidden = mode.hidden;
+  $('permission-label').textContent = {full:'完全访问',ask:'按需审批',device:'设备默认'}[mode.value];
+  $('permission-control').title = capable && mode.value !== 'device' ? $('permission-note').textContent : mode.title;
   $('prompt').disabled = !agent || !!readOnly;
+  resizePrompt();
   $('send-button').disabled = !!window.RelayVoice?.active() || sending || uploadingAttachments > 0 || !agent || readOnly || upgradeRequired || (!$('prompt').value.trim() && !(attachmentDrafts.get(selected)?.length));
   window.RelayVoice?.render();
   $('attach-image').disabled = sending || uploadingAttachments > 0 || !agent || readOnly || !(device?.capabilities.image_input || device?.capabilities.file_input);
@@ -374,6 +378,16 @@ function renderHeader() {
   const queued = activeJobs.filter(j => j.status === 'queued').length;
   const reason = {outside_roots:'设备端仍是旧版本，请更新 CLI 并重启后台进程。',cwd_missing:'工作目录已不存在。',cli_missing:'设备上未检测到对应的 Agent CLI。'};
   $('queue-hint').textContent = !agent ? '' : readOnly ? '仅可查看 · ' + (reason[agent.control_reason] || '当前会话无法远程操作。') : upgradeRequired ? '请将目标设备 Relay 升级至 0.6.1 并重启后台进程，以取消旧版执行时限。' : !connected ? '连接恢复后会自动同步，输入的内容会保留。' : !device?.online ? '设备离线，发送的消息将在上线后执行。' : queued ? `${queued} 条消息等待执行，将按顺序继续对话。` : agent.external_busy ? '当前会话正在另一端回复，可以继续追加消息。' : '';
+}
+
+let promptSize = null;
+function resizePrompt() {
+  const prompt = $('prompt');
+  const width = prompt.clientWidth;
+  if (!width || (promptSize?.width === width && promptSize.value === prompt.value)) return;
+  promptSize = {width, value:prompt.value};
+  prompt.style.height = 'auto';
+  prompt.style.height = prompt.scrollHeight + 'px';
 }
 
 async function loadConversation(before) {
@@ -890,6 +904,7 @@ function updateViewport() {
 window.visualViewport?.addEventListener('resize',updateViewport);
 window.visualViewport?.addEventListener('scroll',updateViewport);
 window.addEventListener('resize',updateViewport);
+window.addEventListener('resize',resizePrompt);
 document.addEventListener('focusin',()=>requestAnimationFrame(updateViewport));
 updateViewport();
 

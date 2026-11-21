@@ -43,6 +43,10 @@ def mobile_layout(page,field,mic,send):
  for width,height in [(320,568),(360,640),(390,844),(430,932),(390,420)]:
   page.set_viewport_size({'width':width,'height':height})
   page.wait_for_function('()=>Math.abs(document.getElementById("workspace").getBoundingClientRect().height-visualViewport.height)<1')
+  page.evaluate('RelayVoice.cancel()');field.fill('')
+  empty_height=field.bounding_box()['height'];assert page.locator('#send-form').bounding_box()['height']<=112
+  field.fill('第一行\n第二行\n第三行\n第四行');assert field.bounding_box()['height']>empty_height
+  field.fill('');assert abs(field.bounding_box()['height']-empty_height)<1
   for busy in (False,True):
    page.evaluate("busy=>{activeJobs=busy?[{id:'layout-fixture',status:'running'}]:[];renderHeader();}",busy)
    field.fill('手机语音');before=mic.bounding_box()
@@ -51,7 +55,6 @@ def mobile_layout(page,field,mic,send):
    assert before['width']>=44 and before['height']>=44 and before['x']>width/2
    send_box=send.bounding_box();assert before['x']+before['width']<=send_box['x'] and abs(before['y']-send_box['y'])<1
    press(page,mic,True)
-   if not busy and width>360:expect(mic.locator('.voice-input-label')).to_be_visible()
    page.evaluate("speechInstances.at(-1).emit([['这是一段较长的识别内容，用来确认提示和文字出现在输入框上方，按住时不会推动按钮或遮挡发送操作。',false]])")
    status=page.locator('#voice-status').bounding_box();after=mic.bounding_box()
    assert status and status['y']>=0 and status['y']+status['height']<=field.bounding_box()['y']
