@@ -4,7 +4,7 @@ window.RelayVoice = (() => {
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const supported=!!Recognition&&isSecureContext;
   const button=$('voice-input'), prompt=$('prompt');
-  let current=null;
+  let current=null,held=null;
   const unavailable='当前浏览器不支持语音识别，可使用手机键盘上的麦克风听写。';
   const errors={
     'not-allowed':'未获得麦克风或语音识别权限，请在浏览器或系统设置中允许后重试。',
@@ -20,10 +20,14 @@ window.RelayVoice = (() => {
     $('voice-message').textContent=message;$('voice-preview').textContent=preview;
   }
   function valid(capture){return current===capture&&signedIn&&generation===capture.account&&selected===capture.agent&&!prompt.disabled;}
+  function releaseHold(){
+    const previous=held;held=null;
+    if(previous?.pointerId!==undefined)try{button.releasePointerCapture(previous.pointerId);}catch{/* Capture may already be lost. */}
+  }
   function dispose(capture,abort=false){
     clearTimeout(capture.timer);
     capture.recognition.onstart=capture.recognition.onresult=capture.recognition.onerror=capture.recognition.onend=null;
-    if(current===capture)current=null;
+    if(current===capture){current=null;releaseHold();}
     if(abort)try{capture.recognition.abort();}catch{/* Already stopped. */}
   }
   function cancel(){
@@ -35,10 +39,10 @@ window.RelayVoice = (() => {
     const active=!!current;
     button.disabled=!signedIn||!selected||prompt.disabled||sending||current?.phase==='stopping';
     button.setAttribute('aria-pressed',String(active));
-    const label=active?current.phase==='stopping'?'正在结束语音输入':'停止语音输入':'语音输入';
+    const label=active?current.phase==='stopping'?'正在结束语音输入':'松手结束语音输入':'按住说话';
     button.setAttribute('aria-label',label);
-    button.title=active?label:supported?'语音输入（优先中文，由浏览器语音服务处理，识别后可编辑）':unavailable;
-    button.innerHTML=icon(active?'stop':'microphone');
+    button.title=active?label:supported?'按住麦克风说话，松手结束（也可按住空格或 Enter，识别后可编辑）':unavailable;
+    button.innerHTML=icon('microphone');
   }
   function insert(capture,text){
     if(!valid(capture))return;
@@ -58,7 +62,12 @@ window.RelayVoice = (() => {
     if(capture.truncated){status('输入已达到长度上限，请编辑后再继续。');stop();}
   }
   function stop(){
+    releaseHold();
     const capture=current;if(!capture||capture.phase==='stopping')return;
+    // Abort a pending permission/start request: releasing must never start the mic later.
+    if(capture.phase==='starting'){
+      dispose(capture,true);status('已松开，按住麦克风再说一次。');renderHeader();return;
+    }
     capture.phase='stopping';status(capture.truncated?'输入已达到长度上限，请编辑后再继续。':'正在结束识别…');renderHeader();
     // stop() may emit a final result; keep the session bound until onend.
     try{capture.recognition.stop();}
@@ -68,8 +77,8 @@ window.RelayVoice = (() => {
       dispose(capture,true);status('语音输入已结束，已识别文字可编辑后发送。');renderHeader();
     },5000);
   }
-  button.addEventListener('click',()=>{
-    if(current){stop();return;}
+  function begin(gesture){
+    if(current||held)return;
     if(!signedIn||!selected||prompt.disabled||sending)return;
     if(!supported){status(unavailable);return;}
     if(prompt.value.length>=prompt.maxLength){status('输入已达到长度上限，请编辑后再继续。');return;}
@@ -77,10 +86,10 @@ window.RelayVoice = (() => {
     try{recognition=new Recognition();}
     catch{status('无法启动浏览器语音服务，可使用系统键盘听写。');return;}
     const capture={recognition,account:generation,agent:selected,phase:'starting',finals:new Set(),received:false,timer:null};
-    current=capture;recognition.lang='zh-CN';recognition.continuous=true;recognition.interimResults=true;recognition.maxAlternatives=1;
+    held=gesture;current=capture;recognition.lang='zh-CN';recognition.continuous=true;recognition.interimResults=true;recognition.maxAlternatives=1;
     recognition.onstart=()=>{
       if(!valid(capture)){if(current===capture)cancel();return;}
-      if(capture.phase!=='stopping'){capture.phase='listening';status('正在聆听，点击麦克风停止。');render();}
+      if(capture.phase!=='stopping'){capture.phase='listening';status('正在聆听，松手结束。');render();}
     };
     recognition.onresult=event=>{
       if(!valid(capture)){if(current===capture)cancel();return;}
@@ -105,7 +114,31 @@ window.RelayVoice = (() => {
     status('等待语音服务和麦克风授权…');renderHeader();
     try{recognition.start();}
     catch{dispose(capture,true);status('无法启动语音识别，请重试或使用系统键盘听写。');renderHeader();}
+  }
+  button.addEventListener('pointerdown',event=>{
+    if(!event.isPrimary||event.button!==0)return;
+    event.preventDefault();
+    const gesture={pointerId:event.pointerId};begin(gesture);
+    if(held===gesture)try{button.setPointerCapture(event.pointerId);}catch{/* Window release handlers also stop dictation. */}
   });
+  function pointerRelease(event){if(held?.pointerId===event.pointerId)stop();}
+  window.addEventListener('pointerup',pointerRelease,true);
+  window.addEventListener('pointercancel',pointerRelease,true);
+  button.addEventListener('lostpointercapture',pointerRelease);
+  button.addEventListener('contextmenu',event=>event.preventDefault());
+  button.addEventListener('click',event=>{
+    event.preventDefault();
+    // Assistive/synthetic clicks show the hold instructions without leaving the mic on.
+    if(event.detail===0&&!current)status(supported?'按住麦克风说话，松手结束；也可按住空格或 Enter 说话。':unavailable);
+  });
+  button.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&current){event.preventDefault();stop();return;}
+    if(event.key!==' '&&event.key!=='Enter')return;
+    event.preventDefault();if(!event.repeat)begin({key:event.key});
+  });
+  window.addEventListener('keyup',event=>{if(held?.key===event.key){event.preventDefault();stop();}},true);
+  button.addEventListener('blur',()=>{if(held?.key)stop();});
+  window.addEventListener('blur',()=>{if(current)stop();});
   prompt.addEventListener('keydown',event=>{if(event.key==='Escape'&&current){event.preventDefault();stop();}});
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden&&current){cancel();status('语音输入已暂停，已识别文字已保留。');renderHeader();}

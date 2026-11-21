@@ -20,7 +20,7 @@ The installation commands below connect to the hosted service by default. Codex 
 
 Enable Web Push in the sidebar’s Notifications panel (`通知`) for reminders explicitly sent by an agent. Task completion and approval requests do not send notifications automatically. On iPhone, add Relay to your Home Screen through Safari first (iOS 16.4+); no paid Apple developer account is needed. CLI 0.7.0+ supports `relayctl notify --title 'Done' --body 'Results are ready'`.
 
-Dictate into the message composer with the microphone button, then edit and send the transcript. Voice input uses the browser’s speech service with Chinese as the recognition language. Availability depends on the browser and system; keyboard dictation remains an alternative.
+Hold the microphone button to dictate, release to stop, then edit and send the transcript. Voice input uses the browser’s speech service with Chinese as the recognition language. Availability depends on the browser and system; keyboard dictation remains an alternative.
 
 ## Install on a device
 

@@ -12,7 +12,7 @@ SPEECH=r'''
 window.speechInstances=[];
 class FakeRecognition {
  constructor(){this.starts=0;this.stops=0;this.aborts=0;this.late={};speechInstances.push(this);}
- start(){this.starts++;if(window.speechThrow)throw Error('unavailable');this.late.start=this.onstart;this.onstart?.();}
+ start(){this.starts++;if(window.speechThrow)throw Error('unavailable');this.late.start=this.onstart;if(!window.speechDelay)this.onstart?.();}
  stop(){this.stops++;}
  abort(){this.aborts++;}
  emit(results){this.onresult?.({resultIndex:0,results:results.map(([text,final])=>Object.assign([{transcript:text}],{isFinal:final}))});}
@@ -24,6 +24,19 @@ class FakeRecognition {
 Object.defineProperty(window,'SpeechRecognition',{value:PREFIX?undefined:FakeRecognition,configurable:true});
 Object.defineProperty(window,'webkitSpeechRecognition',{value:PREFIX?FakeRecognition:undefined,configurable:true});
 '''
+
+def press(page,mic,mobile):
+ if mobile:
+  mic.dispatch_event('pointerdown',{'pointerId':13,'pointerType':'touch','isPrimary':True,'button':0,'buttons':1})
+ else:
+  mic.hover();page.mouse.down()
+
+def release(page,mobile,outside=False):
+ if mobile:
+  page.locator('body').dispatch_event('pointerup',{'pointerId':13,'pointerType':'touch','isPrimary':True,'button':0,'buttons':0})
+ else:
+  if outside:page.mouse.move(1,1)
+  page.mouse.up()
 
 def main():
  with tempfile.TemporaryDirectory() as temporary:
@@ -45,7 +58,7 @@ def main():
       field=page.locator('#prompt');mic=page.locator('#voice-input');send=page.locator('#send-button');expect(mic).to_be_enabled()
       # Preserve the draft around a selection and preview interim text without committing it.
       field.fill('请帮我旧文字，谢谢');page.evaluate("()=>{const p=document.getElementById('prompt');p.setSelectionRange(3,6);}")
-      mic.click();expect(mic).to_have_attribute('aria-pressed','true');expect(send).to_be_disabled()
+      press(page,mic,mobile);expect(mic).to_have_attribute('aria-pressed','true');expect(send).to_be_disabled()
       assert page.evaluate('speechInstances.at(-1).lang')=='zh-CN';assert page.evaluate('speechInstances.at(-1).continuous')
       page.evaluate("speechInstances.at(-1).emit([['检查这个项目',false]])");expect(page.locator('#voice-preview')).to_have_text('检查这个项目');expect(field).to_have_value('请帮我旧文字，谢谢')
       page.evaluate("speechInstances.at(-1).emit([['检查这个项目',true],['并修复',false]])");expect(field).to_have_value('请帮我检查这个项目，谢谢');expect(page.locator('#voice-preview')).to_have_text('并修复')
@@ -53,33 +66,71 @@ def main():
       # Cumulative duplicate events must not append final text a second time.
       page.evaluate("speechInstances.at(-1).emit([['检查这个项目',true],['并修复问题',true]])");expect(field).to_have_value('请帮我检查这个项目并修复问题，谢谢');assert not posts
       assert page.evaluate('id=>sessionStorage.getItem("relay-draft:"+id)',agents[0]['id'])==field.input_value()
-      mic.click();expect(mic).to_be_disabled();expect(send).to_be_disabled()
+      release(page,mobile,outside=True);expect(mic).to_be_disabled();expect(send).to_be_disabled()
       page.evaluate("speechInstances.at(-1).emit([['检查这个项目',true],['并修复问题',true],['。',true]])");page.evaluate('speechInstances.at(-1).end()')
       expect(field).to_have_value('请帮我检查这个项目并修复问题。，谢谢');expect(send).to_be_enabled();assert not posts
       # Editing stays available during dictation; English segments get a word boundary.
-      field.fill('Hello');mic.click();page.evaluate("speechInstances.at(-1).emit([['world',true]])");expect(field).to_have_value('Hello world')
+      field.fill('Hello');press(page,mic,mobile);page.evaluate("speechInstances.at(-1).emit([['world',true]])");expect(field).to_have_value('Hello world')
       field.fill('手动修改');page.evaluate("speechInstances.at(-1).emit([['world',true],['后继续说',true]])");expect(field).to_have_value('手动修改后继续说')
-      page.evaluate('speechInstances.at(-1).end()');send.click();page.wait_for_function('()=>!sending');assert len(posts)==1;assert posts[0].post_data_json['prompt']=='手动修改后继续说'
+      release(page,mobile);page.evaluate('speechInstances.at(-1).end()');send.click();page.wait_for_function('()=>!sending');assert len(posts)==1;assert posts[0].post_data_json['prompt']=='手动修改后继续说'
       # Cancel on session switch and reject late results from the previous instance.
-      field.fill('原会话草稿');mic.click();page.evaluate('speechInstances.at(-1).remember()');page.evaluate('id=>selectAgent(id)',agents[1]['id'])
-      expect(field).to_have_value('');page.evaluate("speechInstances.at(-1).delayed('不能进入另一个会话')");expect(field).to_have_value('');assert page.evaluate('speechInstances.at(-1).aborts')==1
+      field.fill('原会话草稿');press(page,mic,mobile);page.evaluate('speechInstances.at(-1).remember()');page.evaluate('id=>selectAgent(id)',agents[1]['id'])
+      expect(field).to_have_value('');page.evaluate("speechInstances.at(-1).delayed('不能进入另一个会话')");expect(field).to_have_value('');assert page.evaluate('speechInstances.at(-1).aborts')==1;release(page,mobile)
       page.evaluate('id=>selectAgent(id)',agents[0]['id']);expect(field).to_have_value('原会话草稿')
       # Permission denial, unavailable service and start failure remain recoverable.
       for code,notice in [('not-allowed','权限'),('network','连接失败'),('no-speech','没有识别到'),('audio-capture','麦克风')]:
-       mic.click();page.evaluate('code=>speechInstances.at(-1).error(code)',code);expect(page.locator('#voice-message')).to_contain_text(notice);expect(mic).to_have_attribute('aria-pressed','false');expect(field).to_have_value('原会话草稿')
-      page.evaluate('window.speechThrow=true');mic.click();expect(page.locator('#voice-message')).to_contain_text('无法启动');expect(mic).to_be_enabled();page.evaluate('window.speechThrow=false')
+       press(page,mic,mobile);page.evaluate('code=>speechInstances.at(-1).error(code)',code);expect(page.locator('#voice-message')).to_contain_text(notice);expect(mic).to_have_attribute('aria-pressed','false');expect(field).to_have_value('原会话草稿');release(page,mobile)
+      page.evaluate('window.speechThrow=true');press(page,mic,mobile);expect(page.locator('#voice-message')).to_contain_text('无法启动');expect(mic).to_be_enabled();page.evaluate('window.speechThrow=false');release(page,mobile)
       # Leave the browser/tab: abort rather than resume the microphone in the background.
-      mic.click();page.evaluate('speechInstances.at(-1).remember()');page.evaluate("()=>{Object.defineProperty(document,'hidden',{value:true,configurable:true});document.dispatchEvent(new Event('visibilitychange'));}")
+      press(page,mic,mobile);page.evaluate('speechInstances.at(-1).remember()');page.evaluate("()=>{Object.defineProperty(document,'hidden',{value:true,configurable:true});document.dispatchEvent(new Event('visibilitychange'));}")
       expect(mic).to_have_attribute('aria-pressed','false');page.evaluate("speechInstances.at(-1).delayed('late after hiding')");expect(field).to_have_value('原会话草稿')
-      page.evaluate("()=>Object.defineProperty(document,'hidden',{value:false,configurable:true})")
-      mic.click();page.evaluate('speechInstances.at(-1).remember()');page.evaluate("window.dispatchEvent(new Event('pagehide'))");expect(mic).to_have_attribute('aria-pressed','false');assert page.evaluate('speechInstances.at(-1).aborts')==1
+      page.evaluate("()=>Object.defineProperty(document,'hidden',{value:false,configurable:true})");release(page,mobile)
+      press(page,mic,mobile);page.evaluate('speechInstances.at(-1).remember()');page.evaluate("window.dispatchEvent(new Event('pagehide'))");expect(mic).to_have_attribute('aria-pressed','false');assert page.evaluate('speechInstances.at(-1).aborts')==1;release(page,mobile)
       page.evaluate("()=>{document.getElementById('prompt').disabled=true;RelayVoice.render();}");expect(mic).to_be_disabled();page.evaluate('renderHeader()');expect(mic).to_be_enabled()
       # Enforce textarea maxlength even though programmatic insertions bypass browser typing checks.
-      field.fill('x'*31999);mic.click();page.evaluate("speechInstances.at(-1).emit([['🙂',true]])");page.evaluate('speechInstances.at(-1).end()');assert len(field.input_value())==31999
-      field.fill('x'*31998);mic.click();page.evaluate("speechInstances.at(-1).emit([['甲乙丙',true]])");page.evaluate('speechInstances.at(-1).end()');assert len(field.input_value())==32000
+      field.fill('x'*31999);press(page,mic,mobile);page.evaluate("speechInstances.at(-1).emit([['🙂',true]])");release(page,mobile);page.evaluate('speechInstances.at(-1).end()');assert len(field.input_value())==31999
+      field.fill('x'*31998);press(page,mic,mobile);page.evaluate("speechInstances.at(-1).emit([['甲乙丙',true]])");release(page,mobile);page.evaluate('speechInstances.at(-1).end()');assert len(field.input_value())==32000
+      # A quick click cannot leave dictation running; there is no stop icon.
+      field.fill('');idle_icon=mic.inner_html();mic.click();assert page.evaluate('speechInstances.at(-1).stops')==1
+      expect(page.locator('#voice-message')).to_contain_text('正在结束');assert mic.inner_html()==idle_icon
+      page.evaluate('speechInstances.at(-1).end()');expect(mic).to_be_enabled()
+      # Fast release while waiting for permission aborts the request and rejects a late start/result.
+      page.evaluate('window.speechDelay=true');press(page,mic,mobile);page.evaluate('speechInstances.at(-1).remember()')
+      release(page,mobile);assert page.evaluate('speechInstances.at(-1).aborts')==1;assert not page.evaluate('RelayVoice.active()')
+      page.evaluate("speechInstances.at(-1).late.start();speechInstances.at(-1).delayed('松手后不应录音')");expect(field).to_have_value('')
+      page.evaluate('window.speechDelay=false')
+      # Real Chromium touch events keep capture after dragging away, then stop on release.
+      if not mobile:
+       cdp=context.new_cdp_session(page);box=mic.bounding_box();point={'x':box['x']+box['width']/2,'y':box['y']+box['height']/2}
+       cdp.send('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[point]});expect(mic).to_have_attribute('aria-pressed','true')
+       cdp.send('Input.dispatchTouchEvent',{'type':'touchMove','touchPoints':[{'x':1,'y':1}]})
+       assert page.evaluate('speechInstances.at(-1).stops')==0
+       cdp.send('Input.dispatchTouchEvent',{'type':'touchEnd','touchPoints':[]});assert page.evaluate('speechInstances.at(-1).stops')==1
+       page.evaluate('speechInstances.at(-1).end()');cdp.detach()
+      # Pointer cancellation/capture loss and a blurred window stop the held microphone.
+      for event in ('pointercancel','lostpointercapture'):
+       mic.dispatch_event('pointerdown',{'pointerId':71,'pointerType':'touch','isPrimary':True,'button':0,'buttons':1})
+       mic.dispatch_event(event,{'pointerId':71,'pointerType':'touch','isPrimary':True})
+       assert page.evaluate('speechInstances.at(-1).stops')==1;page.evaluate('speechInstances.at(-1).end()')
+      press(page,mic,mobile);page.evaluate("window.dispatchEvent(new Event('blur'))");release(page,mobile)
+      assert page.evaluate('speechInstances.at(-1).stops')==1;page.evaluate('speechInstances.at(-1).end()')
+      # Keyboard hold/release supports Space and Enter without repeats or accidental submission.
+      for key in ('Space','Enter'):
+       mic.focus();before=page.evaluate('speechInstances.length');page.keyboard.down(key);page.keyboard.down(key)
+       assert page.evaluate('speechInstances.length')==before+1;expect(page.locator('#voice-message')).to_contain_text('松手结束')
+       page.keyboard.up(key);assert page.evaluate('speechInstances.at(-1).stops')==1;page.evaluate('speechInstances.at(-1).end()')
+      mic.focus();page.keyboard.down('Space');field.focus();page.keyboard.up('Space')
+      assert page.evaluate('speechInstances.at(-1).stops')==1;page.evaluate('speechInstances.at(-1).end()');assert len(posts)==1
+      # An assistive click gives instructions and never starts a persistent microphone.
+      before=page.evaluate('speechInstances.length');mic.evaluate('el=>el.click()');assert page.evaluate('speechInstances.length')==before
+      expect(page.locator('#voice-message')).to_contain_text('按住麦克风');assert mic.evaluate('el=>getComputedStyle(el).touchAction')=='none'
+      # Ignore secondary pointers and non-primary mouse buttons.
+      mic.dispatch_event('pointerdown',{'pointerId':72,'isPrimary':False,'button':0})
+      mic.dispatch_event('pointerdown',{'pointerId':73,'isPrimary':True,'button':2})
+      assert page.evaluate('speechInstances.length')==before
       # Logout invalidates callbacks before asynchronous sign-out and drops account drafts.
-      field.fill('私有草稿');mic.click();page.evaluate('speechInstances.at(-1).remember()');page.evaluate('logout()');expect(page.locator('#login')).to_be_visible()
-      page.evaluate("speechInstances.at(-1).delayed('旧账号内容')");assert page.evaluate('speechInstances.at(-1).aborts')==1
+      field.fill('私有草稿');press(page,mic,mobile);page.evaluate('speechInstances.at(-1).remember()');page.evaluate('logout()');expect(page.locator('#login')).to_be_visible()
+      page.evaluate("speechInstances.at(-1).delayed('旧账号内容')");assert page.evaluate('speechInstances.at(-1).aborts')==1;release(page,mobile)
       assert page.evaluate('id=>sessionStorage.getItem("relay-draft:"+id)',agents[0]['id']) is None
       assert not errors,errors
       if mobile:
@@ -87,7 +138,7 @@ def main():
        field.focus();page.wait_for_timeout(200)
        assert float(field.evaluate('el=>getComputedStyle(el).fontSize').removesuffix('px'))>=16
        box=send.bounding_box();assert box and box['x']>=0 and box['x']+box['width']<=page.viewport_size['width'];assert box['y']+box['height']<=page.viewport_size['height']
-      print(name+': dictation drafts, cursor, cumulative results, stop, errors, account/session isolation and send passed',flush=True)
+      print(name+': dictation drafts, cursor, cumulative results, hold/release, permission delay, keyboard, errors, account/session isolation and send passed',flush=True)
      finally:context.close()
      # An unsupported browser still offers an honest keyboard dictation hint.
      context=browser.new_context();page=context.new_page();page.add_init_script("Object.defineProperty(window,'SpeechRecognition',{value:undefined});Object.defineProperty(window,'webkitSpeechRecognition',{value:undefined});")
