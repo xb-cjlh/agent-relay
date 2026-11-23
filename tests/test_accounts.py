@@ -72,6 +72,10 @@ class AccountsCase(unittest.TestCase):
         aa=a.request('POST','/api/agents',{'device':da['id'],'name':'conversation','kind':'codex','cwd':'/tmp'})
         job=a.request('POST','/api/jobs',{'kind':'prompt','agent':aa['id'],'prompt':'private'})
         self.denied(404,b,'GET','/api/agents/'+aa['id']+'/messages')
+        self.denied(404,b,'POST','/api/agents/'+aa['id']+'/settings',{'custom_title':'stolen','favorite':True})
+        a.headers={'X-Relay-Request':''}
+        self.denied(403,a,'POST','/api/agents/'+aa['id']+'/settings',{'favorite':True})
+        a.headers={}
         self.denied(404,b,'GET','/api/jobs/'+job['id'])
         self.denied(404,b,'POST','/api/jobs/'+job['id']+'/cancel',{})
         self.denied(404,b,'POST','/api/agents',{'device':da['id'],'name':'bad','kind':'codex','cwd':'/tmp'})

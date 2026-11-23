@@ -146,3 +146,24 @@ class SessionPaginationCase(unittest.TestCase):
             with self.assertRaises(APIError) as error:
                 self.get(**invalid)
             self.assertEqual(error.exception.status, 400)
+
+    def test_favorites_filter_before_pagination_and_keep_live_windows_scoped(self):
+        favorites=self.all[15:60]
+        for agent in favorites:
+            self.client.request('POST','/api/agents/'+agent['id']+'/settings',{'favorite':True})
+        page=self.get('/api/state',view='web',organization='favorites')
+        self.assertEqual([a['id'] for a in page['agents']],[a['id'] for a in favorites[:30]])
+        second=self.get(organization='favorites',before=page['next_cursor'])
+        self.assertEqual([a['id'] for a in second['agents']],[a['id'] for a in favorites[30:]])
+        self.assertFalse(second['has_more'])
+        target=favorites[-1]
+        self.client.request('POST','/api/agents/'+target['id']+'/settings',{'custom_title':'收藏专用名字 %_'})
+        self.assertEqual([a['id'] for a in self.get(organization='favorites',q='%_')['agents']],[target['id']])
+        home=self.devices[1][0]['id']
+        scoped=self.get(organization='favorites',device=home)
+        self.assertEqual([a['id'] for a in scoped['agents']],[a['id'] for a in favorites if a['device_id']==home])
+        through=str(target['last_activity'])+'|'+target['id']
+        self.client.request('POST','/api/agents/'+favorites[0]['id']+'/settings',{'favorite':False})
+        live=self.get('/api/state',view='web',organization='favorites',through=through)
+        self.assertEqual([a['id'] for a in live['agents']],[a['id'] for a in favorites[1:]])
+        self.assertTrue(all(a['favorite'] for a in live['agents']))

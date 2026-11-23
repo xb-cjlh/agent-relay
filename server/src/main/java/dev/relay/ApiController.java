@@ -73,8 +73,8 @@ final class ApiController {
         String cursor=request.getParameter("before");
         if (method.equals("GET") && path.equals("/api/state")) result="web".equals(request.getParameter("view"))
             ? store.snapshot(true,request.getParameter("device"),request.getParameter("q"),request.getParameter("through"),request.getParameter("selected"),
-                "directory".equals(request.getParameter("organization")),request.getParameter("directory_device"),request.getParameter("cwd")) : store.snapshot();
-        else if (method.equals("GET") && path.equals("/api/agents")) result=store.sessions(request.getParameter("device"),request.getParameter("q"),cursor,request.getParameter("directory_device"),request.getParameter("cwd"));
+                "directory".equals(request.getParameter("organization")),request.getParameter("directory_device"),request.getParameter("cwd"),"favorites".equals(request.getParameter("organization"))) : store.snapshot();
+        else if (method.equals("GET") && path.equals("/api/agents")) result=store.sessions(request.getParameter("device"),request.getParameter("q"),cursor,request.getParameter("directory_device"),request.getParameter("cwd"),"favorites".equals(request.getParameter("organization")));
         else if (method.equals("GET") && path.equals("/api/directories")) result=store.recentDirectories(request.getParameter("device"));
         else if (method.equals("POST") && path.equals("/api/register")) result=store.register(body);
         else if(method.equals("POST")&&path.equals("/api/notifications"))result=notifications.create(body);
@@ -90,6 +90,7 @@ final class ApiController {
         }
         else if (method.equals("POST") && path.equals("/api/devices/merge")) result=store.mergeDevices(body);
         else if (method.equals("POST") && path.equals("/api/agents")) result=store.createAgent(body);
+        else if (method.equals("POST") && path.matches("/api/agents/[^/]+/settings")) result=store.updateAgentSettings(path.split("/")[3],body);
         else if (method.equals("GET") && path.matches("/api/agents/[^/]+/messages")) result=store.conversation(path.split("/")[3],cursor);
         else if (method.equals("POST") && path.matches("/api/agents/[^/]+/shares")) result=shares.create(path.split("/")[3],body);
         else if (method.equals("GET") && path.matches("/api/agents/[^/]+/shares")) result=shares.listShares(path.split("/")[3]);

@@ -37,7 +37,14 @@ window.RelayNotifications = (() => {
   async function open(id){
     if(!signedIn){pending=id;return;}const account=generation;
     try{const n=await api('notifications/'+encodeURIComponent(id));if(account!==generation)return;await api('notifications/'+encodeURIComponent(id)+'/read',{});if(account!==generation)return;
-      if(n.agent_id){$('notifications-dialog').close();deviceFilter='';$('device-filter').value='';$('search').value='';activeDirectory='';sessionOrganization='time';sessionStorage.removeItem('relay-device-filter');sessionStorage.setItem('relay-session-organization','time');selectAgent(n.agent_id,true,false);resetSessions();await refresh();}
+      if(n.agent_id){
+        const reply=await api('agents/'+encodeURIComponent(n.agent_id)+'/messages');if(account!==generation)return;
+        $('notifications-dialog').close();deviceFilter='';$('device-filter').value='';clearTimeout(searchTimer);$('search').value='';
+        activeDirectory=directoryKey(reply.agent);sessionOrganization='directory';directoryExpanded=true;
+        sessionStorage.removeItem('relay-device-filter');sessionStorage.setItem('relay-session-organization','directory');sessionStorage.setItem('relay-active-directory',activeDirectory);
+        if(!state.agents.some(agent=>agent.id===reply.agent.id))state.agents.push(reply.agent);
+        selectAgent(reply.agent.id,true,false);resetSessions();await refresh();
+      }
       else{if(!$('notifications-dialog').open)$('notifications-dialog').showModal();}
       await load();
     }catch(error){toast(error.message);}

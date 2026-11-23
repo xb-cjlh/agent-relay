@@ -30,6 +30,7 @@ def main():
                     'cwd': str(root / (name + '-' + str(i))), 'updated_at': 1000 + i,
                     'busy': False} for i in range(count)]})
                 devices.append(identity)
+            server.database.execute('UPDATE agents SET favorite=TRUE')
             all_agents = client.request('GET', '/api/state')['agents']
             oldest = min(all_agents, key=lambda a: (a['last_activity'], a['id']))
             with sync_playwright() as p:
@@ -41,7 +42,7 @@ def main():
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     # Polling is covered by session_list_smoke; keep race cases deterministic here.
-                    page.add_init_script('window.setInterval=()=>0;')
+                    page.add_init_script('window.setInterval=()=>0;sessionStorage.setItem("relay-session-organization","favorites");')
                     page.goto(base)
                     server.browser_login(page)
                     page.locator('#open-sidebar').click()

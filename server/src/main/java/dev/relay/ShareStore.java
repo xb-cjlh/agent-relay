@@ -53,7 +53,7 @@ final class ShareStore {
         }
         messages.sort(Comparator.<Map<String,Object>>comparingDouble(m->number(m.get("created_at"))).thenComparing(m->text(m.get("id"))).thenComparingDouble(m->number(m.getOrDefault("offset",0))));
         for(int i=0;i<messages.size();i++){messages.get(i).put("id",i);messages.get(i).remove("offset");}
-        String title=text(agent.getOrDefault("title",""));if(title.isBlank())title=text(agent.get("name"));
+        String title=text(agent.getOrDefault("custom_title",""));if(title.isBlank())title=text(agent.getOrDefault("title",""));if(title.isBlank())title=text(agent.get("name"));
         String snapshot=store.encode(map("title",title,"kind",agent.get("kind"),"messages",messages));
         if(snapshot.getBytes(StandardCharsets.UTF_8).length>MAX_BYTES)throw new ApiException(413,"会话内容超过 8 MiB，暂时无法分享");
         if(number(usage.get("bytes"))+snapshot.getBytes(StandardCharsets.UTF_8).length>64*1024*1024)throw new ApiException(429,"分享内容已达上限，请先撤销部分链接");

@@ -1,5 +1,6 @@
 """Native session titles remain separate from stable CLI names and identities."""
 import tempfile
+import hashlib
 import unittest
 from pathlib import Path
 from urllib.parse import urlencode
@@ -72,3 +73,52 @@ class SessionTitlesCase(unittest.TestCase):
         self.assertEqual(self.agents()[0]['title'],'名'*256)
         self.sync(title=' \n ')
         self.assertEqual(self.agents()[0]['title'],'')
+
+    def test_custom_title_favorite_survive_sync_and_restart(self):
+        for kind in ('codex','claude'):
+            self.sync(kind,title='原生标题')
+        original=self.agents()
+        for agent in original:
+            reply=self.client.request('POST','/api/agents/'+agent['id']+'/settings',{'custom_title':'  自定义\n 名字 '+agent['kind'],'favorite':True})
+            self.assertTrue(reply['favorite'])
+            self.sync(agent['kind'],title='后续自动标题')
+        page=self.client.request('GET','/api/state?view=web&organization=favorites')
+        self.assertEqual(len(page['agents']),2)
+        for agent in page['agents']:
+            old=next(a for a in original if a['id']==agent['id'])
+            self.assertEqual(agent['custom_title'],'自定义 名字 '+agent['kind'])
+            self.assertEqual(agent['title'],'后续自动标题')
+            self.assertEqual((agent['name'],agent['last_activity']),(old['name'],old['last_activity']))
+        self.assertEqual(len(self.agents(q='自定义 名字')),2)
+        database=self.server.database
+        self.server.shutdown()
+        self.server=Server(('127.0.0.1',0),self.root/'data',TOKEN,database=database)
+        self.client=Client('http://127.0.0.1:'+str(self.server.server_port),TOKEN)
+        self.assertEqual(len(self.client.request('GET','/api/agents?organization=favorites')['agents']),2)
+        agent=self.agents()[0]
+        self.client.request('POST','/api/agents/'+agent['id']+'/settings',{'custom_title':'','favorite':False})
+        self.assertEqual(self.agents(q='自定义 名字 '+agent['kind']),[])
+        self.assertEqual(len(self.client.request('GET','/api/agents?organization=favorites')['agents']),1)
+        self.assertEqual(self.client.request('GET','/api/state')['jobs'],[])
+
+    def test_settings_validate_atomically_and_reject_other_accounts_and_device_tokens(self):
+        self.sync(title='native')
+        agent=self.agents()[0];path='/api/agents/'+agent['id']+'/settings'
+        for invalid in ({},{'title':'wrong field'},{'custom_title':None},{'custom_title':'a'*257},
+                        {'custom_title':'bad\0title'},{'favorite':1},{'favorite':'true'},
+                        {'custom_title':'must roll back','favorite':None}):
+            with self.assertRaises(APIError) as error:self.client.request('POST',path,invalid)
+            self.assertEqual(error.exception.status,400)
+            unchanged=self.agents()[0]
+            self.assertEqual(unchanged['custom_title'],'')
+            self.assertFalse(unchanged['favorite'])
+        with self.assertRaises(APIError) as error:self.device.request('POST',path,{'favorite':True})
+        self.assertEqual(error.exception.status,403)
+        other_token='sk-relay_'+'p'*43
+        self.server.database.execute("INSERT INTO app_users(id,email,display_name,created_at) VALUES('other','other@test.invalid','Other',0)")
+        self.server.database.execute("INSERT INTO agent_keys(id,user_id,name,token_hash,token_prefix,created_at,expires_at) VALUES('other-key','other','Other',?,?,0,4102444800)",
+            (hashlib.sha256(other_token.encode()).hexdigest(),other_token[:17]))
+        other=Client(self.client.server,other_token)
+        with self.assertRaises(APIError) as error:other.request('POST',path,{'favorite':True})
+        self.assertEqual(error.exception.status,404)
+        self.assertEqual(other.request('GET','/api/agents?organization=favorites')['agents'],[])

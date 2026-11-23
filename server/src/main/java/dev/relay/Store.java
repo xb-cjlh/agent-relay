@@ -135,6 +135,7 @@ final class Store {
         return cwd instanceof String value && devicePath(value,device).isAbsolute();
     }
     private Map<String,Object> decorateAgent(Map<String,Object> agent, Map<String,Object> device) {
+        agent.put("favorite",truth(agent.get("favorite")));
         Object capabilities=device.get("capabilities");
         var caps=object(capabilities instanceof String ? decode(capabilities) : capabilities);
         if (!allowedCwd(agent.get("cwd"),device)) {
@@ -198,24 +199,25 @@ final class Store {
         } catch(NumberFormatException e) { throw new ApiException("会话分页参数无效"); }
     }
     private record SessionScope(String filter,List<Object> args) {}
-    private SessionScope sessionScope(String device,String query,String directoryDevice,String cwd) {
+    private SessionScope sessionScope(String device,String query,String directoryDevice,String cwd,boolean favorites) {
         if(query==null)query="";
         if(query.length()>200)throw new ApiException("搜索内容不能超过 200 个字符");
         String filter=" WHERE 1=1";
         List<Object> args=new ArrayList<>();args.add(owner());
+        if(favorites)filter+=" AND favorite=TRUE";
         if(device!=null && !device.isEmpty()) { filter+=" AND device_id=?";args.add(device); }
         if(cwd!=null) {
             if(directoryDevice==null || directoryDevice.isEmpty() || cwd.length()>4096)throw new ApiException("工作目录筛选参数无效");
             filter+=" AND device_id=? AND BINARY cwd=BINARY ?";args.add(directoryDevice);args.add(cwd);
         }
         if(!query.isBlank()) {
-            filter+=" AND LOWER(CONCAT_WS(' ',title,name,cwd,kind,IF(kind='claude','Claude Code','Codex'),device_name,preview)) LIKE ? ESCAPE '='";
+            filter+=" AND LOWER(CONCAT_WS(' ',custom_title,title,name,cwd,kind,IF(kind='claude','Claude Code','Codex'),device_name,preview)) LIKE ? ESCAPE '='";
             args.add("%"+query.strip().toLowerCase(Locale.ROOT).replace("=","==").replace("%","=%").replace("_","=_")+"%");
         }
         return new SessionScope(filter,args);
     }
     private List<Map<String,Object>> sessionDirectories(String device,String query) {
-        var scope=sessionScope(device,query,null,null);
+        var scope=sessionScope(device,query,null,null,false);
         // Paths are case sensitive even when the database's default collation is not.
         return rows("SELECT device_id,MIN(cwd) cwd,COUNT(*) session_count,MAX(activity) last_activity FROM ("+SESSION_QUERY+") sessions"+scope.filter()+
             " GROUP BY device_id,BINARY cwd ORDER BY last_activity DESC,device_id,BINARY cwd",scope.args().toArray());
@@ -225,8 +227,8 @@ final class Store {
         var entries=sessionDirectories(text(d.get("id")),"");
         return map("directories",entries.subList(0,Math.min(20,entries.size())));
     }
-    private Map<String,Object> sessionPage(String device,String query,String before,String through,List<Map<String,Object>> devices,String directoryDevice,String cwd) {
-        var scope=sessionScope(device,query,directoryDevice,cwd);
+    private Map<String,Object> sessionPage(String device,String query,String before,String through,List<Map<String,Object>> devices,String directoryDevice,String cwd,boolean favorites) {
+        var scope=sessionScope(device,query,directoryDevice,cwd,favorites);
         String filter=scope.filter();List<Object> args=scope.args();
         var cursor=sessionCursor(before);var end=sessionCursor(through);
         if(cursor!=null && end!=null)throw new ApiException("会话分页参数无效");
@@ -243,7 +245,7 @@ final class Store {
         }
         String source="("+SESSION_QUERY+") sessions";
         var agents=rows("SELECT * FROM "+source+window+" ORDER BY activity DESC,id"+(end==null ? " LIMIT 31" : ""),pageArgs.toArray());
-        if(end!=null && agents.isEmpty())return sessionPage(device,query,null,null,devices,directoryDevice,cwd);
+        if(end!=null && agents.isEmpty())return sessionPage(device,query,null,null,devices,directoryDevice,cwd,favorites);
         boolean more=agents.size()>30 && end==null;
         if(more)agents=new ArrayList<>(agents.subList(0,30));
         String next=null;
@@ -258,11 +260,11 @@ final class Store {
         }
         return map("agents",decorateSessions(agents,devices),"has_more",more,"next_cursor",more ? next:null);
     }
-    Map<String,Object> sessions(String device,String query,String before,String directoryDevice,String cwd) {
-        return sessionPage(device,query,before,null,deviceSummaries(),directoryDevice,cwd);
+    Map<String,Object> sessions(String device,String query,String before,String directoryDevice,String cwd,boolean favorites) {
+        return sessionPage(device,query,before,null,deviceSummaries(),directoryDevice,cwd,favorites);
     }
-    Map<String,Object> snapshot() { return snapshot(false,null,null,null,null,false,null,null); }
-    Map<String,Object> snapshot(boolean web,String device,String query,String through,String selected,boolean byDirectory,String directoryDevice,String cwd) {
+    Map<String,Object> snapshot() { return snapshot(false,null,null,null,null,false,null,null,false); }
+    Map<String,Object> snapshot(boolean web,String device,String query,String through,String selected,boolean byDirectory,String directoryDevice,String cwd,boolean favorites) {
         var devices=deviceSummaries();
         var directories=web && byDirectory ? sessionDirectories(device,query) : List.<Map<String,Object>>of();
         Map<String,Object> activeDirectory=null;
@@ -274,7 +276,7 @@ final class Store {
             directoryDevice=activeDirectory==null ? null:text(activeDirectory.get("device_id"));
             cwd=activeDirectory==null ? null:text(activeDirectory.get("cwd"));
         }
-        var page=web ? sessionPage(device,query,null,through,devices,directoryDevice,cwd) : null;
+        var page=web ? sessionPage(device,query,null,through,devices,directoryDevice,cwd,favorites) : null;
         Object agents=web ? page.get("agents") : decorateSessions(rows("SELECT * FROM ("+SESSION_QUERY+") sessions ORDER BY created_at DESC",owner()),devices);
         var jobs=rows("SELECT j.*,d.name device_name,a.name agent_name,a.kind agent_kind FROM jobs j JOIN devices d ON d.id=j.device_id LEFT JOIN agents a ON a.id=j.agent_id WHERE d.owner_user_id=?"+(web ? " AND j.kind='file_read'" : "")+" ORDER BY j.created_at DESC LIMIT 100",owner());
         for (var j : jobs) j.put("payload",decode(j.get("payload")));
@@ -312,6 +314,19 @@ final class Store {
         String id = id("agt");
         update("INSERT INTO agents(id,device_id,name,kind,cwd,created_at) VALUES(?,?,?,?,?,?)",id,device.get("id"),name,kind,cwd,now());
         return agent(id);
+    }
+    Map<String,Object> updateAgentSettings(String ref,Map<String,Object> body) {
+        var current=agent(ref);
+        if(body.isEmpty() || !Set.of("custom_title","favorite").containsAll(body.keySet()))throw new ApiException("会话设置参数无效");
+        if(body.containsKey("custom_title")) {
+            if(!(body.get("custom_title") instanceof String title) || title.codePointCount(0,title.length())>256 || title.chars().anyMatch(c -> Character.isISOControl(c) && !Character.isWhitespace(c)))throw new ApiException("会话名称最多 256 个字符，不能包含控制字符");
+            update("UPDATE agents SET custom_title=? WHERE id=?",title.strip().replaceAll("\\s+"," "),current.get("id"));
+        }
+        if(body.containsKey("favorite")) {
+            if(!(body.get("favorite") instanceof Boolean))throw new ApiException("收藏参数必须为布尔值");
+            update("UPDATE agents SET favorite=? WHERE id=?",body.get("favorite"),current.get("id"));
+        }
+        return agent(text(current.get("id")));
     }
     Map<String,Object> conversation(String ref, String cursor) {
         return conversation(ref,cursor,100);
@@ -751,6 +766,7 @@ final class Store {
                     var existing=rows("SELECT id FROM agents WHERE device_id=? AND kind=? AND session_id=? AND merged_into IS NULL",targetId,agent.get("kind"),agent.get("session_id"));
                     if (!existing.isEmpty()) {
                         Object canonical=existing.get(0).get("id");
+                        update("UPDATE agents SET favorite=(favorite OR ?),custom_title=IF(custom_title='',?,custom_title) WHERE id=?",truth(agent.get("favorite")),agent.get("custom_title"),canonical);
                         update("UPDATE jobs SET agent_id=? WHERE agent_id=?",canonical,agent.get("id"));
                         update("UPDATE conversation_shares SET agent_id=? WHERE agent_id=?",canonical,agent.get("id"));
                         update("UPDATE messages SET agent_id=? WHERE agent_id=?",canonical,agent.get("id"));

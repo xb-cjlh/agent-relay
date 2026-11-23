@@ -56,8 +56,6 @@ input::placeholder, textarea::placeholder { color: #a7b19b; }
 .directory-sessions { margin-left: 12px; padding-left: 3px; border-left: 1px solid #dfe6d7; }
 .load-more-sessions { display: block; width: calc(100% - 24px); margin: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); font-size: 12px; }
 .load-more-sessions:hover { background: #ecf0e5; }
-.session-group { margin: 12px 0 8px; }
-.session-group-heading { margin: 0; padding: 0 12px 7px; font-size: 10px; font-weight: 500; color: #8f9c82; }
 .session-item { display: block; width: 100%; border: 0; text-align: left; padding: 11px 12px; border-radius: 7px; background: none; margin-bottom: 2px; }
 .session-item:hover { background: #ecf0e5; }
 .session-item.selected { background: #e5ecdc; }
@@ -120,6 +118,16 @@ input::placeholder, textarea::placeholder { color: #a7b19b; }
 .conversation-heading { min-width: 0; flex: 1; }
 .conversation-title-row { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .conversation-title-row h1 { min-width: 0; }
+.session-title-button { display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; padding: 4px 0; background: transparent; border: 0; text-align: left; color: inherit; font: inherit; }
+.session-title-button > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-title-button svg { width: 12px; height: 12px; flex-shrink: 0; color: #9ea991; }
+.session-title-button:hover svg { color: #53774f; }
+#favorite-session[aria-pressed="true"] { color: #8c7944; }
+#favorite-session[aria-pressed="true"] svg { fill: #e8ddad; }
+@media (max-width: 760px) {
+  .session-title-button { min-height: 44px; }
+  .conversation-header #favorite-session, .conversation-header #share-conversation { width: 36px; min-width: 36px; height: 44px; }
+}
 .conversation-header h1 { font-size: 14px; font-weight: 500; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conversation-meta { color: #9ea991; font-family: monospace; font-size: 10px; margin-top: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conversation-meta:empty { display: none; }

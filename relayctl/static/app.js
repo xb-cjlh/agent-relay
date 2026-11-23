@@ -9,6 +9,8 @@ const icons = {
   expand:'<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
   collapse:'<path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/>',
   right:'<path d="m9 5 7 7-7 7"/>',
+  edit:'<path d="m15 4 5 5M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Z"/>',
+  star:'<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/>',
   share:'<path d="M12 16V3m-4 4 4-4 4 4M5 12v8h14v-8"/>',
   up:'<path d="M12 19V5m-5 5 5-5 5 5"/>', down:'<path d="M12 5v14m-5-5 5 5 5-5"/>',
   stop:'<rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/>',
@@ -35,7 +37,7 @@ const attachmentUploads = new Set();
 let state = {devices:[], agents:[], jobs:[], artifacts:[]};
 let selected = sessionStorage.getItem('relay-selected') || '';
 let deviceFilter = sessionStorage.getItem('relay-device-filter') || '';
-let sessionOrganization = sessionStorage.getItem('relay-session-organization') === 'directory' ? 'directory' : 'time';
+let sessionOrganization = sessionStorage.getItem('relay-session-organization') === 'favorites' ? 'favorites' : 'directory';
 let activeDirectory = sessionStorage.getItem('relay-active-directory') || '';
 let directoryExpanded = true;
 let messages = new Map();
@@ -49,6 +51,8 @@ let sessionLoading = true, sessionMoreLoading = false, sessionError = false, ses
 let refreshRequest = 0, refreshPromise = null, searchTimer;
 let recentDirectoryRequest = 0, directoryRequest = 0, directoryJob = '', directoryListing = null;
 const drafts = new Map();
+const sessionSettingsSaving = new Set();
+let renameAgentId = '';
 
 function showScreen(id) {
   for (const screen of ['session-loading','login','workspace']) $(screen).hidden = screen !== id;
@@ -89,7 +93,7 @@ async function logout(localOnly=false) {
   for (const upload of attachmentUploads) upload.abort();
   for (const key of Object.keys(sessionStorage)) if (key.startsWith('relay-')) sessionStorage.removeItem(key);
   sessionRevision++; refreshRequest++; refreshing = false; sessionRows = []; sessionThrough = sessionCursor = null; sessionHasMore = false; sessionLoading = true; sessionMoreLoading = false; sessionError = false;
-  selected = ''; deviceFilter = ''; sessionOrganization = 'time'; activeDirectory = ''; directoryExpanded = true; drafts.clear(); attachmentDrafts.clear(); imageUrls.clear(); messages.clear(); activeJobs=[]; approvals=[]; renderApprovals(); state={devices:[],agents:[],jobs:[],artifacts:[]};
+  selected = ''; deviceFilter = ''; sessionOrganization = 'directory'; activeDirectory = ''; directoryExpanded = true; drafts.clear(); attachmentDrafts.clear(); imageUrls.clear(); messages.clear(); sessionSettingsSaving.clear(); activeJobs=[]; approvals=[]; renderApprovals(); state={devices:[],agents:[],jobs:[],artifacts:[]};
   showScreen('login');
   $('new-key-secret').textContent = ''; $('new-key').hidden = true;
   $('key-list').replaceChildren(); $('messages').replaceChildren(); $('attachment-list').replaceChildren();
@@ -108,8 +112,8 @@ function sessionParameters() {
   if (deviceFilter) params.set('device',deviceFilter);
   const query = $('search').value.trim();
   if (query) params.set('q',query);
+  params.set('organization',sessionOrganization);
   if (sessionOrganization === 'directory') {
-    params.set('organization','directory');
     const directory = directoryScope();
     if (directory) { params.set('directory_device',directory.device_id); params.set('cwd',directory.cwd); }
   }
@@ -239,7 +243,7 @@ function setDeviceFilter(id) {
 }
 
 function setSessionOrganization(value) {
-  if (!['time','directory'].includes(value) || value === sessionOrganization) return;
+  if (!['favorites','directory'].includes(value) || value === sessionOrganization) return;
   sessionOrganization = value; directoryExpanded = true;
   sessionStorage.setItem('relay-session-organization',value);
   const agent = state.agents.find(agent => agent.id === selected);
@@ -256,8 +260,9 @@ function openSessionDirectory(key) {
   $('session-items').querySelector('[aria-expanded="true"]')?.scrollIntoView({block:'nearest'});
 }
 
+const sessionTitle = agent => agent?.custom_title?.trim() || agent?.title?.trim() || '';
 function sessionName(agent) {
-  if (agent.title?.trim()) return agent.title.trim();
+  if (sessionTitle(agent)) return sessionTitle(agent);
   const project = String(agent.cwd || '').replace(/\/$/,'').split('/').pop();
   if (agent.origin === 'native') return sessionOrganization === 'directory' ? agent.name || project : project || agent.name;
   const generated = /^(?:codex|claude) · (.+) · [a-z0-9]+$/.exec(agent.name || '');
@@ -265,40 +270,34 @@ function sessionName(agent) {
 }
 
 function calendarDay(value) { return Date.UTC(value.getFullYear(),value.getMonth(),value.getDate()); }
-function activityGroup(timestamp,now) {
-  const days = (calendarDay(now) - calendarDay(new Date(timestamp * 1000))) / 86400000;
-  return days <= 0 ? '今天' : days === 1 ? '昨天' : days < 7 ? '近 7 天' : days < 30 ? '近 30 天' : '更早';
-}
-
 function sessionItem(agent,device,now) {
   const timestamp = activityTime(agent), when = new Date(timestamp * 1000);
   const recent = calendarDay(now) - calendarDay(when) <= 86400000;
   const time = when.toLocaleString('zh-CN',recent ? {hour:'2-digit',minute:'2-digit',hour12:false} : {month:'2-digit',day:'2-digit',...(when.getFullYear() === now.getFullYear() ? {} : {year:'numeric'})});
-  const fullName = [kindName(agent.kind),agent.title,agent.name,device.name,agent.cwd,agent.session_id].filter(Boolean).join(' · ');
+  const fullName = [kindName(agent.kind),sessionTitle(agent),agent.name,device.name,agent.cwd,agent.session_id].filter(Boolean).join(' · ');
   return `<button class="session-item${selected === agent.id ? ' selected' : ''}" data-agent="${esc(agent.id)}" aria-current="${selected === agent.id ? 'true' : 'false'}" title="${esc(fullName)}"><span class="session-item-top">${kindBadge(agent.kind)}<span class="session-name">${esc(sessionName(agent))}</span>${agent.busy ? '<span class="dot busy" title="正在回复"></span>' : ''}</span><span class="session-item-meta">${!deviceFilter ? `<span class="session-device" title="${esc(device.name)} · ${device.online ? '在线' : '离线'}"><span class="dot ${device.online ? 'online' : 'offline'}"></span><span>${esc(device.name)}</span></span>` : ''}<span class="session-preview">${esc(agent.preview || agent.cwd)}</span><time datetime="${when.toISOString()}" title="${esc(when.toLocaleString('zh-CN'))}">${esc(time)}</time></span></button>`;
 }
 
 function renderSessions() {
   const query = $('search').value.trim().toLowerCase(), now = new Date();
   const devices = new Map(state.devices.map(device => [device.id,device]));
-  const groups = new Map();
+  const items = [];
   for (const agent of [...sessionRows].sort(newestFirst)) {
     const device = devices.get(agent.device_id);
     if (!device) continue;
-    const group = activityGroup(activityTime(agent),now);
-    if (!groups.has(group)) groups.set(group,[]);
-    groups.get(group).push(sessionItem(agent,device,now));
+    if (sessionOrganization === 'favorites' && !agent.favorite) continue;
+    items.push(sessionItem(agent,device,now));
   }
-  const empty = sessionLoading ? '<p class="sidebar-empty" role="status">正在加载会话…</p>' : sessionError ? '' : `<p class="sidebar-empty">${query ? '没有匹配的会话。' : deviceFilter ? '这台设备还没有同步到会话，可先在设备上使用 Codex / Claude Code，或新建会话。' : '还没有会话。连接设备后，会自动发现当前用户各目录下的已有会话。'}</p>`;
-  let sections = [...groups].map(([label,items]) => `<section class="session-group" aria-label="${label}"><h2 class="session-group-heading">${label}</h2>${items.join('')}</section>`).join('');
+  const empty = sessionLoading ? '<p class="sidebar-empty" role="status">正在加载会话…</p>' : sessionError ? '' : `<p class="sidebar-empty">${query ? '没有匹配的会话。' : sessionOrganization === 'favorites' ? '还没有收藏的会话。打开会话后，点击右上角的星标即可收藏。' : deviceFilter ? '这台设备还没有同步到会话，可先在设备上使用 Codex / Claude Code，或新建会话。' : '还没有会话。连接设备后，会自动发现当前用户各目录下的已有会话。'}</p>`;
+  let sections = items.join('');
   if (sessionOrganization === 'directory') {
-    const items = [...groups.values()].flat().join('') || empty;
+    const directoryItems = items.join('') || empty;
     sections = (state.directories || []).filter(entry => !deviceFilter || entry.device_id === deviceFilter).map(entry => {
       const key = directoryKey(entry), open = key === activeDirectory && directoryExpanded;
       const path = entry.cwd || '', parts = path.split('/').filter(Boolean), name = parts.pop() || path || '未知目录';
       const device = devices.get(entry.device_id), parent = (parts.length > 2 ? '…/' : '/') + parts.slice(-2).join('/');
       const meta = (!deviceFilter ? `<span class="directory-device">${esc(device?.name)}</span><span>·</span>` : '') + `<span class="directory-parent">${esc(parent)}</span>`;
-      return `<section class="directory-group"><button type="button" class="directory-heading" data-directory="${esc(key)}" aria-expanded="${open}" title="${esc((device?.name || '') + ' · ' + path)}">${icon('right')}${icon('folder')}<span class="directory-label"><span class="directory-name">${esc(name)}</span><span class="directory-meta">${meta}</span></span><span class="directory-count">${entry.session_count}</span></button>${open ? `<div class="directory-sessions" data-directory-sessions>${items}</div>` : ''}</section>`;
+      return `<section class="directory-group"><button type="button" class="directory-heading" data-directory="${esc(key)}" aria-expanded="${open}" title="${esc((device?.name || '') + ' · ' + path)}">${icon('right')}${icon('folder')}<span class="directory-label"><span class="directory-name">${esc(name)}</span><span class="directory-meta">${meta}</span></span><span class="directory-count">${entry.session_count}</span></button>${open ? `<div class="directory-sessions" data-directory-sessions>${directoryItems}</div>` : ''}</section>`;
     }).join('');
   }
   document.querySelectorAll('[data-organization]').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.organization === sessionOrganization)));
@@ -312,6 +311,50 @@ function renderSessions() {
   }
   renderSessionPager();
 }
+
+async function saveSessionSettings(id,settings) {
+  if (sessionSettingsSaving.has(id)) return false;
+  const account = generation;
+  sessionSettingsSaving.add(id); renderHeader();
+  try {
+    const reply = await api(`agents/${encodeURIComponent(id)}/settings`,settings);
+    if (account !== generation || !signedIn) return false;
+    // Discard reads started before the write so they cannot restore stale names.
+    sessionRevision++; refreshRequest++; refreshing = false; conversationRequest++;
+    sessionMoreLoading = false;
+    const apply = agent => agent.id === reply.id ? {...agent,custom_title:reply.custom_title,favorite:reply.favorite} : agent;
+    state.agents = state.agents.map(apply); sessionRows = sessionRows.map(apply);
+    if (sessionOrganization === 'favorites') sessionRows = sessionRows.filter(agent => agent.favorite);
+    renderSessions(); renderHeader();
+    return true;
+  } finally {
+    if (account === generation) { sessionSettingsSaving.delete(id); renderHeader(); }
+  }
+}
+$('favorite-session').addEventListener('click',async () => {
+  const agent = state.agents.find(agent => agent.id === selected);
+  if (!agent) return;
+  try { if (await saveSessionSettings(agent.id,{favorite:!agent.favorite})) await refresh(); }
+  catch(error) { toast(error.message); }
+});
+$('rename-session').addEventListener('click',() => {
+  const agent = state.agents.find(agent => agent.id === selected);
+  if (!agent) return;
+  renameAgentId = agent.id;
+  $('session-title').value = sessionTitle(agent) || agent.name || '';
+  $('session-title').placeholder = agent.title || agent.name || '会话名称';
+  $('rename-dialog').showModal(); $('session-title').select();
+});
+$('rename-form').addEventListener('submit',event => {
+  event.preventDefault();
+  const id = renameAgentId, title = $('session-title').value;
+  submit(event.currentTarget,async () => {
+    if (await saveSessionSettings(id,{custom_title:title})) {
+      if (renameAgentId === id) $('rename-dialog').close();
+      await refresh();
+    }
+  });
+});
 
 function selectAgent(id,closeSidebar=true,load=true) {
   window.RelayVoice?.cancel();
@@ -338,8 +381,14 @@ function renderHeader() {
   const filteredDevice = state.devices.find(d => d.id === deviceFilter);
   $('empty-description').textContent = filteredDevice ? `${filteredDevice.name} 还没有同步到会话。可在这台设备上新建会话，或切换其他设备。` : '选择已有会话，或在任意设备上新建会话。';
   $('thread').hidden = !agent; $('empty-conversation').hidden = !!agent;
-  $('conversation-title').textContent = agent?.title || agent?.name || '会话';
-  $('conversation-title').title = agent?.title || agent?.name || '';
+  $('conversation-title').textContent = sessionTitle(agent) || agent?.name || '会话';
+  $('conversation-title').title = sessionTitle(agent) || agent?.name || '';
+  $('rename-session').disabled = !agent || sessionSettingsSaving.has(selected);
+  $('favorite-session').hidden = !agent;
+  $('favorite-session').disabled = sessionSettingsSaving.has(selected);
+  $('favorite-session').setAttribute('aria-pressed',String(!!agent?.favorite));
+  $('favorite-session').setAttribute('aria-label',agent?.favorite ? '取消收藏' : '收藏会话');
+  $('favorite-session').title = agent?.favorite ? '取消收藏' : '收藏会话';
   $('conversation-kind').textContent = agent ? kindName(agent.kind) : '';
   $('conversation-kind').className = `agent-badge agent-${agent?.kind === 'claude' ? 'claude' : 'codex'}`;
   $('conversation-kind').hidden = !agent;
@@ -721,14 +770,13 @@ $('agent-form').addEventListener('submit',e => {
     state.agents.push(created); sessionRows.unshift(created);
     $('agent-dialog').close();
     if (deviceFilter && deviceFilter !== agent.device_id) setDeviceFilter(agent.device_id);
-    if (sessionOrganization === 'directory') {
-      sessionRevision++; refreshRequest++; refreshing = false;
-      sessionMoreLoading = sessionLoading = sessionError = false; sessionHasMore = false;
-      clearTimeout(searchTimer); $('search').value = '';
-      activeDirectory = directoryKey(created); directoryExpanded = true; sessionThrough = sessionCursor = null;
-      sessionRows = [created];
-      sessionStorage.setItem('relay-active-directory',activeDirectory);
-    }
+    sessionOrganization = 'directory'; sessionStorage.setItem('relay-session-organization','directory');
+    sessionRevision++; refreshRequest++; refreshing = false;
+    sessionMoreLoading = sessionLoading = sessionError = false; sessionHasMore = false;
+    clearTimeout(searchTimer); $('search').value = '';
+    activeDirectory = directoryKey(created); directoryExpanded = true; sessionThrough = sessionCursor = null;
+    sessionRows = [created];
+    sessionStorage.setItem('relay-active-directory',activeDirectory);
     renderDeviceFilter(); selectAgent(agent.id); $('prompt').focus(); await refresh();
   });
 });

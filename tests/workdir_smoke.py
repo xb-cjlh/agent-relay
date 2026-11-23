@@ -134,7 +134,7 @@ def main():
                     page.evaluate('refresh()')
                     expect(headings.first).to_have_attribute('data-directory', key(work, '/workspace/other/app'))
                     expect(items).to_have_count(4)
-                    page.locator('[data-organization="time"]').click(); expect(items).to_have_count(30)
+                    page.locator('[data-organization="favorites"]').click(); expect(items).to_have_count(0)
                     expect(headings).to_have_count(0)
                     assert page.locator('#session-list').evaluate('(el)=>el.scrollWidth<=el.clientWidth')
                     assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')

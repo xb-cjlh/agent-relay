@@ -26,6 +26,17 @@ class SharesCase(unittest.TestCase):
     def share(self, body=None):
         return self.client.request('POST', '/api/agents/'+self.agent['id']+'/shares', body or {})
 
+    def test_shares_use_custom_title_and_keep_their_snapshot(self):
+        self.fixture()
+        settings='/api/agents/'+self.agent['id']+'/settings'
+        self.client.request('POST',settings,{'custom_title':'手动名称'})
+        share=self.share();public=Client(self.url,share['token'])
+        self.assertEqual('手动名称',public.request('GET','/api/shared/conversation')['title'])
+        self.client.request('POST',settings,{'custom_title':'新名称'})
+        self.assertEqual('手动名称',public.request('GET','/api/shared/conversation')['title'])
+        latest=self.share()
+        self.assertEqual('新名称',Client(self.url,latest['token']).request('GET','/api/shared/conversation')['title'])
+
     def test_token_is_hashed_scoped_readonly_revocable_and_owner_managed(self):
         path = self.fixture()
         self.server.database.execute('UPDATE agents SET title=? WHERE id=?',('名'*256,self.agent['id']))

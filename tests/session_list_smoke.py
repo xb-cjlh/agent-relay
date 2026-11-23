@@ -1,4 +1,4 @@
-"""Browser checks for activity order, calendar groups, and compact session metadata."""
+"""Browser checks for favorite activity order and compact session metadata."""
 import sys
 import datetime
 import tempfile
@@ -43,12 +43,13 @@ with tempfile.TemporaryDirectory() as temp:
                 device.request('POST','/api/device/poll',{'sessions':sessions})
             state=client.request('GET','/api/state')
             expected=sorted(state['agents'],key=lambda a:(-a['last_activity'],a['id']))
+            server.database.execute('UPDATE agents SET favorite=TRUE')
             server.browser_login(page)
+            page.locator('[data-organization="favorites"]').click()
             expect(page.locator('#workspace')).to_be_visible()
             expect(page.locator('#session-list [data-agent]')).to_have_count(10)
             assert page.locator('#session-list [data-agent]').evaluate_all('(items)=>items.map(item=>item.dataset.agent)')==[a['id'] for a in expected]
-            assert page.locator('.session-group-heading').all_text_contents()==['今天','昨天','近 7 天','近 30 天','更早']
-            assert page.evaluate("activityGroup(new Date(2026,10,1,0).getTime()/1000,new Date(2026,10,7,0))")=='近 7 天'
+            assert page.locator('.session-group-heading,[data-organization="time"]').count()==0
             assert len(set(a['device_id'] for a in expected[:2]))==2
             expect(page.locator('.session-device')).to_have_count(10)
             expect(page.locator('.session-name').first).to_have_text('project-with-a-very-long-name-that-must-truncate')
@@ -79,6 +80,6 @@ with tempfile.TemporaryDirectory() as temp:
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             assert not errors,errors
             browser.close()
-        print('Session list passed: mixed device order, five calendar groups, live activity reordering, compact names/device/Agent, tooltips, search and mobile.')
+        print('Session list passed: favorite mixed device order, live activity reordering, compact names/device/Agent, tooltips, search and mobile.')
     finally:
         server.close()
