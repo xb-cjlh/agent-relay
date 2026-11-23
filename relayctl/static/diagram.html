@@ -6,5 +6,20 @@
 <link rel="stylesheet" href="/diagram.css">
 <script src="/diagram-renderer.js" defer></script>
 </head>
-<body><div id="diagram" role="img" aria-label="Mermaid 图表"></div></body>
+<body>
+<div id="diagram-viewer" hidden>
+  <div id="diagram-toolbar" role="toolbar" aria-label="图表缩放">
+    <button id="zoom-out" type="button" aria-label="缩小" title="缩小">−</button>
+    <output id="zoom-level" aria-label="缩放比例">100%</output>
+    <button id="zoom-in" type="button" aria-label="放大" title="放大">+</button>
+    <button id="zoom-fit" type="button" title="适应窗口（0）">适应</button>
+    <button id="zoom-actual" type="button" title="原始大小（1）">原大</button>
+    <span class="diagram-hint">滚轮缩放 · 拖动平移</span>
+    <span class="diagram-touch-hint">双指缩放 · 单指拖动</span>
+  </div>
+  <div id="diagram-viewport" tabindex="0" role="region" aria-label="Mermaid 图表，可缩放和平移">
+    <div id="diagram" role="img" aria-label="Mermaid 图表"></div>
+  </div>
+</div>
+</body>
 </html>

@@ -25,8 +25,83 @@ FLOW='''flowchart LR
   V --> F[dashboard_refresh 消息]
   F --> UI
 '''
-SEQUENCE='sequenceDiagram\n  Alice->>Bob: 你好\n  Bob-->>Alice: 收到\n'
+# Tall enough to reproduce the clipped 800px initial view in full file previews.
+SEQUENCE='sequenceDiagram\n  Alice->>Bob: 你好\n' + '  Bob-->>Alice: 收到\n' * 24
 DOCUMENT='# 架构图\n\n```mermaid\n'+FLOW+'```\n\n```mermaid\n'+SEQUENCE+'```\n\n```mermaid\nflowchart LR\n A[broken\n```\n\n```python\nprint("ordinary code")\n```\n'
+
+def fitted_geometry(frame):
+ return frame.locator('#diagram-viewport').evaluate('''el=>{
+  const v=el.getBoundingClientRect(),s=el.querySelector('svg').getBoundingClientRect();
+  return {fits:s.left>=v.left-1&&s.top>=v.top-1&&s.right<=v.right+1&&s.bottom<=v.bottom+1,
+   width:s.width,height:s.height,viewportWidth:v.width,viewportHeight:v.height,
+   overflow:document.documentElement.scrollWidth>innerWidth,scale:diagramView.scale};
+ }''')
+
+def exercise_diagram_view(page, block, mobile=False):
+ block.scroll_into_view_if_needed()
+ frame=block.frame_locator('iframe')
+ view=frame.locator('#diagram-viewport');drawing=frame.locator('#diagram')
+ expect(block).to_have_attribute('data-diagram-rendered','1',timeout=30000)
+ # Let the frame receive its fitted height and complete its ResizeObserver.
+ frame.locator('body').evaluate('()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+ geometry=fitted_geometry(frame);assert geometry['fits'] and not geometry['overflow'],geometry
+ assert geometry['scale']<=1,geometry
+ assert block.locator('iframe').bounding_box()['height']<=min(600,page.viewport_size['height']*.65)+1
+ initial=geometry['scale']
+ frame.locator('#zoom-in').click();assert fitted_geometry(frame)['scale']>initial
+ frame.locator('#zoom-out').click();assert abs(fitted_geometry(frame)['scale']-initial)<.00001
+ frame.locator('#zoom-actual').click();assert fitted_geometry(frame)['scale']==1
+ frame.locator('#zoom-fit').click();assert fitted_geometry(frame)['fits']
+ view.focus();view.press('+');assert fitted_geometry(frame)['scale']>initial
+ view.press('0');assert fitted_geometry(frame)['fits']
+ # Mobile WebKit has no automated wheel events; desktop uses trusted wheel input.
+ view.hover();before=page.evaluate('scrollY');scroll=page.locator('#message-scroll').evaluate('(el)=>el.scrollTop')
+ anchor=view.bounding_box();cx=anchor['x']+anchor['width']/2;cy=anchor['y']+anchor['height']/2
+ page.mouse.move(cx,cy)
+ if mobile:view.dispatch_event('wheel',{'deltaY':-50,'clientX':anchor['width']/2,'clientY':anchor['height']/2})
+ else:page.mouse.wheel(0,-50)
+ frame.locator('body').evaluate('()=>new Promise(requestAnimationFrame)')
+ assert fitted_geometry(frame)['scale']>initial
+ assert page.evaluate('scrollY')==before
+ assert abs(page.locator('#message-scroll').evaluate('(el)=>el.scrollTop')-scroll)<1
+ transform=drawing.evaluate('(el)=>el.style.transform')
+ page.mouse.down();page.mouse.move(cx+35,cy+25,steps=4);page.mouse.up()
+ assert drawing.evaluate('(el)=>el.style.transform')!=transform
+ # WebKit has no multi-touch automation API. Simulate only the two-finger
+ # events, leaving the trusted mouse path above to verify real pointer capture.
+ touch= view.evaluate('''el=>{
+  const original=el.setPointerCapture;el.setPointerCapture=()=>{};
+  const fire=(type,id,x,y)=>el.dispatchEvent(new PointerEvent(type,{pointerId:id,pointerType:'touch',clientX:x,clientY:y,bubbles:true}));
+  try {
+   const b=el.getBoundingClientRect(),x=b.left+b.width/2,y=b.top+b.height/2;
+   const start=diagramView.scale;
+   fire('pointerdown',101,x-30,y);fire('pointerdown',102,x+30,y);
+   fire('pointermove',101,x-60,y);fire('pointermove',102,x+60,y);
+   const end=diagramView.scale;
+   fire('pointercancel',101,x-60,y);fire('pointerup',102,x+60,y);
+   return {start,end,clean:!el.classList.contains('dragging')};
+  } finally {el.setPointerCapture=original;}
+ }''')
+ assert touch['end']>touch['start'] and touch['clean'],touch
+ # Safari gesture events may omit coordinates: zoom around the canvas center.
+ gesture=view.evaluate('''el=>{
+  const start=diagramView.scale;
+  el.dispatchEvent(new Event('gesturestart',{cancelable:true}));
+  const event=new Event('gesturechange',{cancelable:true});event.scale=1.2;el.dispatchEvent(event);
+  const end=diagramView.scale,valid=Number.isFinite(diagramView.x)&&Number.isFinite(diagramView.y);
+  el.dispatchEvent(new Event('gestureend',{cancelable:true}));return {start,end,valid};
+ }''')
+ assert gesture['end']>gesture['start'] and gesture['valid'],gesture
+ frame.locator('#zoom-fit').click();assert fitted_geometry(frame)['fits']
+ if mobile:assert frame.locator('#zoom-in').bounding_box()['width']>=44
+ # Resizing (including the file preview's full-screen mode) refits an untouched view.
+ original=page.viewport_size
+ page.set_viewport_size({'width':max(320,original['width']-60),'height':original['height']})
+ frame.locator('body').evaluate('()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+ assert fitted_geometry(frame)['fits']
+ page.set_viewport_size(original)
+ frame.locator('body').evaluate('()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+ assert fitted_geometry(frame)['fits']
 
 def main():
  with tempfile.TemporaryDirectory() as td:
@@ -74,7 +149,8 @@ def main():
       assert page.evaluate('window.copiedCode')==FLOW
       expect(body.locator('.code-block pre').last).to_have_text('print("ordinary code")\n')
       assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
-      assert frame.locator('body').evaluate('()=>document.documentElement.scrollWidth>innerWidth'),'wide diagram should scroll inside its frame'
+      exercise_diagram_view(page,blocks.nth(0),name=='WebKit')
+      exercise_diagram_view(page,blocks.nth(1),name=='WebKit')
       before=blocks.nth(0).locator('iframe').get_attribute('height')
       page.evaluate("postMessage({type:'relay-mermaid-result',ok:true,height:1},'*')")
       assert blocks.nth(0).locator('iframe').get_attribute('height')==before
@@ -96,6 +172,11 @@ def main():
       if i<2:expect(preview.locator('[data-mermaid]').nth(i)).to_have_attribute('data-diagram-rendered','1',timeout=30000)
      expect(preview.locator('[data-diagram-rendered]')).to_have_count(2,timeout=30000)
      expect(preview.locator('[data-mermaid]').nth(2).locator('details')).to_have_attribute('open','')
+     exercise_diagram_view(page,preview.locator('[data-mermaid]').nth(1),name=='WebKit')
+     if name=='Chromium':
+      page.locator('#fullscreen-file-preview').click()
+      exercise_diagram_view(page,preview.locator('[data-mermaid]').nth(1))
+      page.locator('#fullscreen-file-preview').click()
      with page.expect_download() as info:page.locator('#download-file-preview').click()
      assert Path(info.value.path()).read_bytes()==data
      if name=='WebKit':assert page.locator('#file-preview').bounding_box()['width']==390
@@ -108,11 +189,13 @@ def main():
      expect(last.locator('pre')).to_contain_text('A-->B')
      expect(last.locator('[data-mermaid]')).to_have_count(0)
      sync('claude','```mermaid\nflowchart LR\n A-->B\n```',stream);page.evaluate('loadConversation()')
+     last.scroll_into_view_if_needed()
      expect(last.locator('[data-diagram-rendered]')).to_have_count(1,timeout=30000)
      # Links and HTML in diagrams cannot run code or navigate the host page.
      assert not errors,errors
      hostile='```mermaid\nflowchart LR\n A["<img src=https://untrusted.example.test/pixel onerror=parent.mermaidInjected=true>"] --> B[Safe]\n click B "javascript:parent.mermaidInjected=true"\n```'
      sync('claude',hostile,stream);page.evaluate('loadConversation()')
+     last.scroll_into_view_if_needed()
      expect(last.locator('[data-diagram-rendered]')).to_have_count(1,timeout=30000)
      inner=last.frame_locator('iframe')
      assert inner.locator('a[href],a[*|href],svg script,svg [onerror]').count()==0

@@ -61,12 +61,18 @@ function showDiagram(block,result) {
   frame.setAttribute('sandbox','allow-scripts'); frame.setAttribute('referrerpolicy','no-referrer');
   frame.dataset.mermaidFrame = '';
   frame.addEventListener('load',() => {
-    if (frame.isConnected) frame.contentWindow.postMessage({type:'relay-show-mermaid',svg:result.svg},'*');
+    if (frame.isConnected) frame.contentWindow.postMessage({type:'relay-show-mermaid',svg:result.svg,maxHeight:diagramHeightLimit()},'*');
   },{once:true});
   frame.addEventListener('error',() => diagramFailed(block),{once:true});
   frame.diagramTimer = setTimeout(() => diagramFailed(block),15000);
   frame.src = '/diagram.html'; block.querySelector('.mermaid-view').append(frame);
 }
+
+function diagramHeightLimit() { return Math.max(180,Math.min(600,Math.floor(innerHeight*.65))); }
+window.addEventListener('resize',() => {
+  for (const frame of document.querySelectorAll('iframe[data-mermaid-frame]'))
+    frame.contentWindow.postMessage({type:'relay-resize-mermaid',maxHeight:diagramHeightLimit()},'*');
+});
 
 function requestDiagram(block) {
   if (!block.isConnected) return;

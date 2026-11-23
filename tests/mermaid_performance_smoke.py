@@ -61,6 +61,8 @@ def main():
                     gzip_bytes = sum(len(gzip.compress((Path(__file__).resolve().parents[1] / 'relayctl/static' / url.split(base + '/',1)[1]).read_bytes())) for url in module_urls)
                     for index in range(3):
                         blocks.nth(index).frame_locator('iframe').locator('body').evaluate('(el,index)=>window.streamingIdentity=index', index)
+                    blocks.nth(0).frame_locator('iframe').locator('#zoom-in').click()
+                    zoomed = blocks.nth(0).frame_locator('iframe').locator('#diagram').evaluate('(el)=>el.style.transform')
                     # Append text in the middle and at the end without rebuilding any diagram.
                     updated = source.replace('原有文字', '原有文字，继续流式输出。')
                     sync(updated + '\n\n补充回复 ' + name)
@@ -69,6 +71,7 @@ def main():
                     for index in range(3):
                         assert blocks.nth(index).frame_locator('iframe').locator('body').evaluate('window.streamingIdentity') == index, 'streaming restarted a diagram frame'
                     assert len(page.evaluate('diagramResults')) == 2
+                    assert blocks.nth(0).frame_locator('iframe').locator('#diagram').evaluate('(el)=>el.style.transform') == zoomed, 'streaming reset diagram zoom'
                     assert set(requests) == module_urls
                     # A fresh view of the same source uses cached SVG, without model or layout work.
                     page.evaluate('document.getElementById("messages").replaceChildren();renderMessages()')
