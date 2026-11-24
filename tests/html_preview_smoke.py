@@ -9,28 +9,38 @@ from test_relay import TOKEN
 from playwright.sync_api import sync_playwright, expect
 
 HTML='''<!doctype html><html><head><meta charset="utf-8"><title>Standalone report</title>
+<link rel="stylesheet" href="ASSET_ORIGIN/library.css">
 <style>h1 {color:rgb(17, 34, 51)} body {margin:20px} button {font-size:18px}</style></head>
 <body><h1>HTML 报告</h1><button id="counter" onclick="this.textContent=++count">0</button>
 <a id="escape" href="/?html-escape=1" target="_top">escape</a>
 <script>
 let count=0;
+document.body.dataset.inline='yes';
+document.addEventListener('DOMContentLoaded',()=>document.body.dataset.ready='yes');
+setTimeout(()=>document.body.dataset.timer='yes',0);
 document.querySelector('#escape').onclick=event=>{event.preventDefault();try{top.location.href='/?html-escape=1';}catch{document.body.dataset.topBlocked='yes';}};
 try { parent.document.body.dataset.injected='yes'; } catch { document.body.dataset.parentBlocked='yes'; }
 try { document.cookie='html-injected=yes'; document.body.dataset.cookieBlocked='no'; } catch { document.body.dataset.cookieBlocked='yes'; }
 try { localStorage.setItem('html-injected','yes'); document.body.dataset.storageBlocked='no'; } catch { document.body.dataset.storageBlocked='yes'; }
 fetch('/api/state?html-probe=1').then(()=>document.body.dataset.fetchBlocked='no').catch(()=>document.body.dataset.fetchBlocked='yes');
 </script>
+<script src="ASSET_ORIGIN/library.js"></script>
+<script type="module">document.body.dataset.module='yes';</script>
 <!-- PADDING -->
 <p id="tail">完整 HTML 尾部</p></body></html>'''.replace('<!-- PADDING -->','<!--'+'x'*280000+'-->')
 
 
 def main():
  with tempfile.TemporaryDirectory() as directory:
-  root=Path(directory);mail=Mailbox();oss=OssFixture();server=Server(('127.0.0.1',0),root/'data',TOKEN,environment={**mail.environment(),**oss.environment()})
+  root=Path(directory);mail=Mailbox();oss=OssFixture();assets=OssFixture();server=Server(('127.0.0.1',0),root/'data',TOKEN,environment={**mail.environment(),**oss.environment()})
   base='http://127.0.0.1:'+str(server.server_port);client=Client(base,TOKEN)
   try:
+   for name,mime,content in (
+    ('library.js','text/javascript',"document.body.dataset.external='yes'"),
+    ('library.css','text/css','#counter {border:3px solid rgb(44, 55, 66)}'),
+   ):assets.objects['/'+name]={'data':content.encode(),'headers':{'content-type':mime}}
    device=client.request('POST','/api/register',{'name':'html-fixture','platform':'test','roots':[],'capabilities':{'codex':True,'file_input':True,'unlimited_tasks':True}})
-   dev=Client(base,device['token']);data=HTML.encode()
+   dev=Client(base,device['token']);data=HTML.replace('ASSET_ORIGIN',assets.url).encode()
    job=client.request('POST','/api/jobs',{'kind':'file_read','device':device['id'],'path':'/private/report.html'})
    dev.request('POST','/api/device/poll',{'capacity':1})
    artifact=dev.request('POST','/api/device/jobs/'+job['id']+'/complete',{'status':'succeeded','file':{'name':'report.html','data':base64.b64encode(data).decode(),'sha256':hashlib.sha256(data).hexdigest()}})['artifact_id']
@@ -58,6 +68,8 @@ def main():
       tab.bring_to_front()
       frame=tab.frame_locator('iframe.html-file-frame');expect(frame.locator('h1')).to_have_text('HTML 报告')
       expect(frame.locator('h1')).to_have_css('color','rgb(17, 34, 51)')
+      for name in ('inline','ready','timer','module'):expect(frame.locator('body')).to_have_attribute('data-'+name,'yes')
+      assert frame.locator('body').get_attribute('data-external') is None
       expect(frame.locator('#tail')).to_have_text('完整 HTML 尾部')
       for name in ('parent','cookie','storage','fetch'):expect(frame.locator('body')).to_have_attribute('data-'+name+'-blocked','yes')
       frame.locator('#counter').click();expect(frame.locator('#counter')).to_have_text('1')
@@ -106,13 +118,14 @@ def main():
      # Signing out invalidates new signed URLs and clears the standalone file.
      page.evaluate('logout()');standalone.reload();expect(standalone.locator('#share-status')).to_contain_text('请先登录');expect(standalone.locator('iframe.html-file-frame')).to_have_count(0)
      assert not any('html-probe' in r.url for r in requests),'HTML escaped the network sandbox'
+     assert not assets.requests,'External scripts or styles were loaded'
      for r in requests:
-      if r.url.startswith(oss.url):assert 'cookie' not in r.headers and 'authorization' not in r.headers
+      if r.url.startswith((oss.url,assets.url)):assert 'cookie' not in r.headers and 'authorization' not in r.headers
      assert not errors,errors
      assert len(client.request('GET','/api/state')['jobs'])==2,'preview queued an offline read'
      anonymous.close();owner.close();browser.close()
-   print('PASS: desktop and mobile HTML styles/scripts, sandbox isolation, full untruncated documents, private and shared standalone tabs, uploaded HTML, exact OSS downloads, refresh, logout and revocation')
-  finally:server.close();mail.close();oss.close()
+   print('PASS: desktop and mobile inline scripts/modules, DOM ready, timers and click handlers; external scripts/styles blocked; isolated private/shared previews, full documents, exact downloads, logout and revocation')
+  finally:server.close();mail.close();oss.close();assets.close()
 
 
 if __name__=='__main__':main()

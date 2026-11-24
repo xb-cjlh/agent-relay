@@ -60,6 +60,8 @@ class FilePreviewCase(unittest.TestCase):
                     for rule in ("sandbox allow-scripts","default-src 'none'","connect-src 'none'","frame-src 'none'","form-action 'none'","style-src 'unsafe-inline'"):
                         self.assertIn(rule,policy)
                     self.assertNotIn('allow-same-origin',policy)
+                    self.assertIn("script-src 'unsafe-inline'",policy)
+                    self.assertNotIn("'unsafe-eval'",policy)
                     self.assertNotIn('https:;',policy)
                     self.assertIn('camera=()',response.headers['Permissions-Policy'])
         with urlopen(self.url) as response:
