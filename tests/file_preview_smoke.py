@@ -72,18 +72,23 @@ def main():
                     browser = engine.launch(**({'executable_path': str(chrome)} if browser_name == 'Chromium' and chrome.exists() else {}))
                     context = browser.new_context(accept_downloads=True, viewport={'width': 1440, 'height': 900} if browser_name == 'Chromium' else {'width': 390, 'height': 650}, **({'is_mobile': True, 'has_touch': True} if browser_name == 'WebKit' else {}))
                     page = context.new_page(); errors = []
+                    # This suite exercises polling fallback; file_watch_smoke covers event delivery.
+                    page.add_init_script("addEventListener('DOMContentLoaded',()=>{supportsFilePreviewWatch=()=>false;})")
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     reads = []; artifact_reads = []
                     page.on('request', lambda request: reads.append(request.post_data_json) if request.method == 'POST' and request.url == base + '/api/jobs' else None)
                     page.on('request', lambda request: artifact_reads.append(request.url) if request.method == 'GET' and request.url.startswith(base + '/api/files/file_') and not request.url.endswith('/url') else None)
                     page.goto(base); server.browser_login(page)
 
+                    def select_agent(agent):
+                        page.evaluate('agent=>{activeDirectory=directoryKey(agent);if(!state.agents.some(a=>a.id===agent.id))state.agents.push(agent);selectAgent(agent.id);resetSessions();}',agent)
+
                     def click_link(label):
                         page.locator('#messages a').filter(has_text=label).evaluate('(el)=>el.click()')
 
                     print(browser_name + ': testing previews', flush=True)
                     for name, agent in agents.items():
-                        page.evaluate('id=>selectAgent(id)', agent['id'])
+                        select_agent(agent)
                         expect(page.locator('#messages a[data-file-link]')).to_have_count(8)
                         before = len(reads)
                         page.wait_for_timeout(1100)
@@ -223,10 +228,10 @@ def main():
                     expect(page.locator('#file-preview-content h1')).to_have_text('home 文件',timeout=15000)
                     assert len(artifact_reads) == before+1, 'expired snapshots need fresh verified bytes'
                     page.locator('#close-file-preview').click()
-                    page.evaluate('id=>selectAgent(id)',agents['work']['id'])
+                    select_agent(agents['work'])
                     click_link('说明')
                     expect(page.locator('#file-preview-content h1')).to_have_text('work 文件',timeout=15000)
-                    page.evaluate('id=>selectAgent(id)',agents['home']['id'])
+                    select_agent(agents['home'])
                     before = len(artifact_reads)
                     click_link('说明')
                     expect(page.locator('#file-preview-content h1')).to_have_text('home 文件')
@@ -254,6 +259,8 @@ def main():
                     assert page.frame_locator('iframe.html-file-frame').locator('body').evaluate('()=>window.fileInjected')
                     assert not page.evaluate('window.fileInjected || false')
                     page.locator('#close-file-preview').click()
+                    # The previous browser may have cached this formerly existing path.
+                    server.database.execute('DELETE FROM file_cache WHERE path=?',(str(projects['home'] / 'missing.txt'),))
                     click_link('缺失')
                     expect(page.locator('#retry-file-preview')).to_be_visible(timeout=15000)
                     expect(page.locator('#download-file-preview')).to_be_disabled()
@@ -261,7 +268,7 @@ def main():
                     page.locator('#retry-file-preview').click()
                     expect(page.locator('#file-preview-content')).to_contain_text('created after first attempt', timeout=15000)
                     (projects['home'] / 'missing.txt').unlink()
-                    page.evaluate('id=>selectAgent(id)', agents['work']['id'])
+                    select_agent(agents['work'])
                     expect(page.locator('#file-preview')).to_be_hidden()
 
                     # A slow old response cannot reopen a preview on another session.
@@ -273,7 +280,7 @@ def main():
                     while not held:
                         assert time.monotonic() < end
                         page.wait_for_timeout(100)
-                    page.evaluate('id=>selectAgent(id)', agents['home']['id'])
+                    select_agent(agents['home'])
                     held[0].continue_()
                     page.wait_for_timeout(300)
                     expect(page.locator('#file-preview')).to_be_hidden()
@@ -295,6 +302,7 @@ def main():
                     offline = client.request('POST', '/api/register', {'name': browser_name + '-offline', 'platform': 'test', 'capabilities': {}})
                     server.database.execute('UPDATE devices SET last_seen=0 WHERE id=?', (offline['id'],))
                     page.evaluate('refresh()')
+                    page.wait_for_function('id=>state.devices.some(d=>d.id===id)',arg=offline['id'])
                     page.evaluate("id=>{void openFilePreview({deviceId:id,path:'/offline.txt'},null);}", offline['id'])
                     expect(page.locator('#file-preview-info')).to_contain_text('设备离线', timeout=15000)
                     job_id = page.evaluate('filePreview.job.id')

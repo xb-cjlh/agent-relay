@@ -87,6 +87,22 @@ type Task struct {
 	codexPath, codexTurn                 string
 	codexOverride                        string
 	nativeTitle                          bool
+	reportMu                             sync.Mutex
+	reported                             bool
+}
+
+// Immediate file completion and heartbeat retries share one idempotent report.
+func (t *Task) report() error {
+	t.reportMu.Lock()
+	defer t.reportMu.Unlock()
+	if t.reported {
+		return nil
+	}
+	_, err := t.client.Request("POST", "/api/device/jobs/"+str(t.job["id"])+"/complete", t.result)
+	if err == nil {
+		t.reported = true
+	}
+	return err
 }
 
 func newTask(job M) *Task {

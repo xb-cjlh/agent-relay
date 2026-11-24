@@ -679,7 +679,7 @@ final class Store {
                     steer=true;
                 }
             }
-            if((steer || "directory_list".equals(j.get("kind"))) && steerClaims<steerSlots)steerClaims++;
+            if((steer || "directory_list".equals(j.get("kind")) || "file_read".equals(j.get("kind"))) && steerClaims<steerSlots)steerClaims++;
             else if(normalClaims<slots)normalClaims++;
             else continue;
             claimedAgents.add(agentId);
@@ -689,7 +689,7 @@ final class Store {
             if(steer)result.put("steer_only",true);
             claimed.add(result);
         }
-        return map("jobs",claimed,"cancel",cancel);
+        return map("jobs",claimed,"cancel",cancel,"file_watches",fileStore.watches.forDevice(deviceId));
     }
     Map<String,Object> complete(String deviceId, String jobId, Map<String,Object> body) throws java.io.IOException {
         var j = row("SELECT * FROM jobs WHERE id=? AND device_id=?",jobId,deviceId);

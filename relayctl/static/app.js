@@ -126,6 +126,7 @@ function refresh() {
   refreshing = true;
   const current = generation, revision = sessionRevision, request = ++refreshRequest;
   const params = sessionParameters(); params.set('view','web');
+  if (filePreview?.watchId && !document.hidden) params.set('file_watch',filePreview.watchId);
   if (sessionThrough) params.set('through',sessionThrough);
   const remembered = (sessionOrganization === 'directory' && sessionStorage.getItem('relay-selected-directory:' + activeDirectory)) || (deviceFilter && sessionStorage.getItem('relay-selected-device:' + deviceFilter)) || selected;
   if (remembered) params.set('selected',remembered);
@@ -137,6 +138,7 @@ function refresh() {
       sessionCursor = next.next_cursor; sessionHasMore = !!next.has_more;
       sessionLoading = false; sessionError = false;
       state = next;
+      receiveFilePreviewUpdate(next.file_watch);
       if (sessionOrganization === 'directory') {
         const key = next.active_directory ? directoryKey(next.active_directory) : '';
         if (key !== activeDirectory) { sessionThrough = null; directoryExpanded = true; }

@@ -9,7 +9,8 @@ final class FileStore {
     static final double TTL=30*86400;
     private final Store store;
     private final OssImages oss;
-    FileStore(Store store,OssImages oss){this.store=store;this.oss=oss;}
+    final FileWatches watches;
+    FileStore(Store store,OssImages oss){this.store=store;this.oss=oss;this.watches=new FileWatches(store,this);}
 
     private String filename(Map<String,Object> body) {
         String name=required(body,"name",255);
@@ -24,10 +25,14 @@ final class FileStore {
         return file.get("object_key")!=null ? oss.head(text(file.get("object_key")))!=null : Files.isRegularFile(store.files.resolve(text(file.get("id"))));
     }
     private Map<String,Object> latest(String device,String path) {
-        if(!oss.configured())return null;
-        var found=store.rows("SELECT f.*,o.object_key,o.checked_at,o.expires_at FROM file_cache c JOIN artifacts f ON f.id=c.artifact_id JOIN file_objects o ON o.artifact_id=f.id WHERE c.device_id=? AND c.path_hash=? AND c.path=? AND o.expires_at>?",device,hash(path),path,now());
-        return found.isEmpty()||!usable(found.get(0)) ? null : found.get(0);
+        var file=latestRow(device,path);
+        return file==null||!usable(file) ? null : file;
     }
+    private Map<String,Object> latestRow(String device,String path) {
+        var found=store.rows("SELECT f.*,o.object_key,COALESCE(o.checked_at,f.created_at) checked_at,COALESCE(o.expires_at,f.created_at+2592000) expires_at FROM file_cache c JOIN artifacts f ON f.id=c.artifact_id LEFT JOIN file_objects o ON o.artifact_id=f.id WHERE c.device_id=? AND c.path_hash=? AND c.path=? AND COALESCE(o.expires_at,f.created_at+2592000)>?",device,hash(path),path,now());
+        return found.isEmpty()?null:found.get(0);
+    }
+    Map<String,Object> latestMetadata(String device,String path) {var file=latestRow(device,path);return file==null?null:metadata(file);}
     private Map<String,Object> metadata(Map<String,Object> file) {
         return map("id",file.get("id"),"name",file.get("name"),"size",file.get("size"),"sha256",file.get("sha256"),"created_at",file.get("created_at"),"checked_at",file.get("checked_at"),"expires_at",file.get("expires_at"));
     }
@@ -107,9 +112,9 @@ final class FileStore {
         promote(result);
         if(result.get("object_key")!=null) {
             store.update("UPDATE file_objects SET checked_at=?,expires_at=? WHERE artifact_id=?",now(),now()+TTL,artifactId);
-            String path=required(payload,"path");
-            store.update("INSERT INTO file_cache(device_id,path_hash,path,artifact_id) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE path=VALUES(path),artifact_id=VALUES(artifact_id)",device,hash(path),path,artifactId);
         }
+        String path=required(payload,"path");
+        store.update("INSERT INTO file_cache(device_id,path_hash,path,artifact_id) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE path=VALUES(path),artifact_id=VALUES(artifact_id)",device,hash(path),path,artifactId);
         return artifactId;
     }
     private void insert(String id,String job,String name,long size,String sha,String key) {

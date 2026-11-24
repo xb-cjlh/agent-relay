@@ -211,6 +211,7 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 	caps := M{"codex": codexErr == nil, "claude": claudeErr == nil, "writable": writable, "discovery_scope": scope, "access_scope": "user", "home": home, "relay_version": Version, "image_input": true, "file_input": true, "codex_permissions": true, "claude_permissions": true, "unlimited_tasks": true, "conditional_files": true, "direct_file_upload": true, "session_titles": true, "codex_steering": true}
 	discoveryRoots := roots
 	caps["directory_browser"] = true
+	caps["file_watch"] = true
 	// Legacy roots is a compatibility field for old servers, not a user setting.
 	if !virtual {
 		roots = []string{"/"}
@@ -250,6 +251,9 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 	client, _ := NewClient(admin.Server, str(state["token"]))
 	fmt.Printf("设备 %s 已连接，ID: %s，会话发现: %s，访问范围: 当前系统用户可访问的所有目录\n", name, str(state["id"]), scope)
 	tasks := map[string]*Task{}
+	monitor := newFileMonitor(ctx, client, base)
+	defer monitor.close()
+	fileDone := make(chan struct{}, 1)
 	mirror := newMirror(discoveryRoots)
 	mirror.scoped = virtual
 	lastContact := time.Now()
@@ -270,6 +274,7 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 		for _, t := range tasks {
 			active = append(active, t.progress())
 		}
+		active = append(active, monitor.progress()...)
 		capacity := 4 - len(tasks)
 		if capacity < 0 {
 			capacity = 0
@@ -278,6 +283,7 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 		caps["codex_steering"] = sharedErr == nil
 		reply, e := client.Request("POST", "/api/device/poll", M{"processes": discover(), "active": active, "capacity": capacity, "steer_capacity": 4, "roots": roots, "capabilities": caps, "sessions": mirror.scan(), "machine_id": machine})
 		if e == nil {
+			monitor.update(arr(reply["file_watches"]))
 			mirror.acknowledge()
 			lastContact = time.Now()
 			for _, id := range arr(reply["cancel"]) {
@@ -308,12 +314,21 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 				t.imageDir = filepath.Join(canonical, "images")
 				t.attachmentDir = filepath.Join(canonical, "attachments")
 				tasks[id] = t
-				go t.run([]string{base}, writable)
+				go func() {
+					t.run([]string{base}, writable)
+					if t.job["kind"] == "file_read" {
+						t.report()
+						select {
+						case fileDone <- struct{}{}:
+						default:
+						}
+					}
+				}()
 			}
 			for id, t := range tasks {
 				select {
 				case <-t.done:
-					if _, e = client.Request("POST", "/api/device/jobs/"+id+"/complete", t.result); e == nil {
+					if e = t.report(); e == nil {
 						if t.job["kind"] == "prompt" && !yes(t.result["steered"]) && !yes(t.result["steering"]) {
 							sid := str(t.result["session_id"])
 							if sid == "" {
@@ -347,6 +362,8 @@ func runDaemon(ctx context.Context, admin *Client, name string, roots []string, 
 		case <-ctx.Done():
 			timer.Stop()
 		case <-timer.C:
+		case <-fileDone:
+			timer.Stop()
 		}
 	}
 	return nil

@@ -91,3 +91,4 @@ jobs:
           python tests/mermaid_performance_smoke.py
           python tests/file_preview_smoke.py
           python tests/oss_file_preview_smoke.py
+          python tests/file_watch_smoke.py

@@ -80,6 +80,7 @@ function showPreviewFile(preview, entry, cached = false) {
 
 function closeFilePreview(restoreFocus = true) {
   const previous = filePreview; filePreview = null;
+  stopFilePreviewWatch(previous);
   if (previous?.url) URL.revokeObjectURL(previous.url);
   if (previous?.wake) previous.wake();
   clearTimeout(previous?.checkTimer);
@@ -110,7 +111,7 @@ async function openFilePreview(link, trigger) {
   }
   const fullscreen = $('file-preview').classList.contains('fullscreen');
   closeFilePreview(false);
-  const preview = {...link,account:generation,trigger}; filePreview = preview;
+  const preview = {...link,account:generation,trigger,lastChangeAt:Date.now()}; filePreview = preview;
   $('file-preview-name').textContent = link.path.split('/').pop() || link.path;
   $('file-preview-source').textContent = state.devices.find(d => d.id === link.deviceId).name + ' · ' + link.path;
   $('file-preview-source').title = link.path;
@@ -122,7 +123,8 @@ async function openFilePreview(link, trigger) {
   const cached = await cachedPreviewFile(preview).catch(() => null);
   if (!previewCurrent(preview)) return;
   if (cached) showPreviewFile(preview,cached,true);
-  if (!cached || Date.now() - cached.checkedAt >= filePreviewCheckInterval(preview)) await fetchFilePreview(preview);
+  if (cached && supportsFilePreviewWatch(preview)) { await renewFilePreviewWatch(preview); scheduleFilePreviewCheck(preview); }
+  else if (!cached || Date.now() - cached.checkedAt >= filePreviewCheckInterval(preview)) await fetchFilePreview(preview);
   else scheduleFilePreviewCheck(preview);
 }
 
@@ -173,7 +175,7 @@ async function fetchFilePreview(preview) {
       const online = state.devices.find(d => d.id === preview.deviceId)?.online;
       $('file-preview-info').textContent = preview.file ? '已缓存 · 正在检查更新…' : preview.job.status === 'queued' ? (online ? '等待设备取回…' : '设备离线，等待上线后取回…') : '正在取回文件…';
       await new Promise(resolve => {
-        const timer = setTimeout(resolve,1000);
+        const timer = setTimeout(resolve,500);
         preview.wake = () => { clearTimeout(timer); resolve(); };
       });
       preview.wake = null;
@@ -182,6 +184,7 @@ async function fetchFilePreview(preview) {
       if (!previewCurrent(preview)) return;
     }
     if (preview.job.status !== 'succeeded') throw new Error(preview.job.error || (preview.job.status === 'cancelled' ? '取回已取消' : '无法取回文件'));
+    preview.checkFailures = 0;
     if (preview.file?.id === preview.job.artifact_id) {
       preview.entry.checkedAt = Date.now();
       await persistPreviewFile(preview,preview.entry);
@@ -192,11 +195,13 @@ async function fetchFilePreview(preview) {
       const file = await readArtifact(preview.job.artifact_id);
       if (!previewCurrent(preview)) return;
       const scroll = $('file-preview-content').scrollTop;
+      preview.lastChangeAt = Date.now();
       showPreviewFile(preview,await cachePreviewFile(preview,file));
       if (previewCurrent(preview) && preview.entry) $('file-preview-content').scrollTop = scroll;
     }
   } catch(error) {
     if (!previewCurrent(preview)) return;
+    preview.checkFailures = (preview.checkFailures || 0) + 1;
     if (preview.file) {
       $('file-preview-info').textContent = '暂时无法检查，显示缓存';
       $('file-preview-info').title = error.message;
@@ -209,25 +214,89 @@ async function fetchFilePreview(preview) {
     if (preview.job && !terminal.has(preview.job.status)) api('jobs/' + preview.job.id + '/cancel',{}).catch(()=>{});
   } finally {
     preview.loading = false;
+    if (previewCurrent(preview) && preview.file && supportsFilePreviewWatch(preview) && !preview.watchId) renewFilePreviewWatch(preview);
     if (previewCurrent(preview)) scheduleFilePreviewCheck(preview);
   }
 }
 
 function filePreviewCheckInterval(preview) {
-  return state.devices.find(d => d.id === preview.deviceId)?.capabilities.conditional_files ? 10000 : 60000;
+  if (!state.devices.find(d => d.id === preview.deviceId)?.capabilities.conditional_files) return 60000;
+  if (preview.checkFailures) return Math.min(60000,2500 * 2 ** Math.min(preview.checkFailures,5));
+  const idle = Date.now() - (preview.lastChangeAt || Date.now());
+  return idle < 60000 ? 2500 : idle < 180000 ? 5000 : idle < 600000 ? 15000 : 30000;
+}
+
+function supportsFilePreviewWatch(preview) {
+  return !preview.watchUnsupported && !!state.devices.find(d => d.id === preview.deviceId)?.capabilities.file_watch;
+}
+function stopFilePreviewWatch(preview) {
+  if (!preview?.watchId) return;
+  const id=preview.watchId; delete preview.watchId; delete preview.watchExpiresAt;
+  api('files/watch',{id,device:preview.deviceId,path:preview.path,stop:true}).catch(()=>{});
+}
+async function renewFilePreviewWatch(preview) {
+  if (!previewCurrent(preview) || document.hidden || preview.watchRenewing || !supportsFilePreviewWatch(preview)) return;
+  if (!preview.watchId) preview.watchId='fw_'+crypto.randomUUID().replaceAll('-','');
+  const id=preview.watchId; preview.watchRenewing=true;
+  try {
+    const reply=await api('files/watch',{id,device:preview.deviceId,path:preview.path});
+    if (!previewCurrent(preview) || preview.watchId!==id || document.hidden) {
+      api('files/watch',{id,device:preview.deviceId,path:preview.path,stop:true}).catch(()=>{}); return;
+    }
+    if (!reply.supported) { preview.watchUnsupported=true; delete preview.watchId; return; }
+    preview.watchExpiresAt=reply.expires_at*1000;
+    receiveFilePreviewUpdate(reply);
+  } catch(error) {
+    if (error.status===404) preview.watchUnsupported=true;
+    if (preview.watchId===id) {delete preview.watchId;delete preview.watchExpiresAt;}
+  } finally { preview.watchRenewing=false; }
+}
+async function receiveFilePreviewUpdate(update) {
+  const preview=filePreview;
+  if (!preview || !previewCurrent(preview) || !preview.watchId || document.hidden) return;
+  if (!update) { if (preview.watchExpiresAt) {delete preview.watchExpiresAt;renewFilePreviewWatch(preview);} return; }
+  if (update.id!==preview.watchId || preview.loading || preview.watchLoading) return;
+  const metadata=update.file;
+  if (!metadata || !preview.file) return;
+  if (metadata.id===preview.file.id) {
+    if (metadata.checked_at*1000>preview.entry.checkedAt) {
+      preview.entry.checkedAt=metadata.checked_at*1000;
+      persistPreviewFile(preview,preview.entry);
+    }
+    return;
+  }
+  preview.watchLoading=true;
+  try {
+    const file=metadata.sha256===preview.file.sha256 ? {...preview.file,id:metadata.id,name:metadata.name} : await readArtifact(metadata.id,metadata);
+    if (!previewCurrent(preview)) return;
+    const scroll=$('file-preview-content').scrollTop;
+    const entry=await cachePreviewFile(preview,file);
+    if (!previewCurrent(preview)) return;
+    preview.lastChangeAt=Date.now();preview.checkFailures=0;
+    showPreviewFile(preview,entry);
+    $('file-preview-content').scrollTop=scroll;
+  } catch(error) {
+    if (previewCurrent(preview)) $('file-preview-info').textContent='暂时无法更新，显示缓存';
+  } finally {preview.watchLoading=false;}
 }
 
 function scheduleFilePreviewCheck(preview) {
   clearTimeout(preview.checkTimer);
-  if (!previewCurrent(preview) || !preview.file) return;
+  if (!previewCurrent(preview) || !preview.file || document.hidden) return;
   preview.checkTimer = setTimeout(() => {
-    if (!document.hidden) fetchFilePreview(preview);
-    else scheduleFilePreviewCheck(preview);
-  },filePreviewCheckInterval(preview));
+    if (preview.watchId && preview.watchExpiresAt>Date.now()) {
+      renewFilePreviewWatch(preview).finally(()=>scheduleFilePreviewCheck(preview));
+    } else fetchFilePreview(preview);
+  },preview.watchId ? 15000 : filePreviewCheckInterval(preview));
 }
 
 document.addEventListener('visibilitychange',() => {
-  if (!document.hidden && filePreview?.file && Date.now() - filePreview.entry.checkedAt >= filePreviewCheckInterval(filePreview)) fetchFilePreview(filePreview);
+  const preview=filePreview;if (!preview?.file) return;
+  if (document.hidden) {clearTimeout(preview.checkTimer);stopFilePreviewWatch(preview);return;}
+  preview.lastChangeAt=Date.now();
+  if (supportsFilePreviewWatch(preview)) renewFilePreviewWatch(preview).finally(()=>scheduleFilePreviewCheck(preview));
+  else if (Date.now() - preview.entry.checkedAt >= filePreviewCheckInterval(preview)) fetchFilePreview(preview);
+  else scheduleFilePreviewCheck(preview);
 });
 
 
